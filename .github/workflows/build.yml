@@ -1,9 +1,8 @@
 name: Build APK
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ master ]
-  pull_request:
     branches: [ master ]
 
 jobs:
@@ -29,21 +28,16 @@ jobs:
       - name: Install Node dependencies
         run: npm install
 
-      - name: Bundle React Native JavaScript
-        run: |
-          mkdir -p android/app/src/main/assets
-          npx expo export:embed --platform android --entry-file index.ts --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res --dev false
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
         working-directory: android
 
-      - name: Build release APK
-        run: ./gradlew assembleRelease --stacktrace
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
         working-directory: android
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          name: debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
