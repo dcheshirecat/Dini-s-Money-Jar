@@ -32,7 +32,7 @@ jobs:
       - name: Bundle React Native JavaScript
         run: |
           mkdir -p android/app/src/main/assets
-          npx react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
+          npx expo export:embed --platform android --entry-file index.ts --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res --dev false
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
