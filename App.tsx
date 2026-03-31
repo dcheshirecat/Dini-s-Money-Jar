@@ -5,6 +5,7 @@ import {
   Alert,
   Animated,
   Easing,
+  Image,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -17,11 +18,16 @@ import {
 
 type Category = { key: string; label: string; color: string };
 type Expense = { id: string; amount: number; category: string; note: string; createdAt: string };
-type MonthData = { budget: number; expenses: Expense[]; savingsEnabled: boolean; savingsSetAside: number };
+type MonthData = {
+  budget: number;
+  expenses: Expense[];
+  savingsEnabled: boolean;
+  savingsGoal: number;
+  savingsSaved: number;
+};
 type StoredData = { categories: Category[]; months: Record<string, MonthData> };
 type LegacyData = { monthKey: string; budget: number; expenses: Expense[] };
 type ScreenMode = 'jar' | 'tracker' | 'history';
-type ExpenseFilter = 'all' | string;
 
 const STORAGE_KEY = 'dinis-money-jar-monthly-budget';
 const DEFAULT_CATEGORIES: Category[] = [
@@ -33,7 +39,7 @@ const DEFAULT_CATEGORIES: Category[] = [
 ];
 const COLOR_OPTIONS = ['#ff8a80', '#ffd166', '#7c7cff', '#4ecdc4', '#ff9f6e', '#2ec4b6', '#a78bfa', '#ff5d8f'];
 const QUICK_BUDGETS = [250, 500, 750, 1000];
-const QUICK_EXPENSE_AMOUNTS = [5, 10, 20, 50];
+const QUICK_SAVINGS = [50, 100, 150, 250];
 
 function getMonthKey(date = new Date()) {
   return `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, '0')}`;
@@ -49,31 +55,42 @@ function getMonthLabel(monthKey: string) {
   return new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
 }
 
+function getTodayLabel(date = new Date()) {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 function formatCurrency(value: number) {
-  return `$${value.toFixed(2)}`;
+  const abs = Math.abs(value).toFixed(2);
+  return value < 0 ? `-\u20AA${abs}` : `\u20AA${abs}`;
 }
 
 function createEmptyMonth(): MonthData {
-  return { budget: 0, expenses: [], savingsEnabled: false, savingsSetAside: 0 };
+  return { budget: 0, expenses: [], savingsEnabled: false, savingsGoal: 0, savingsSaved: 0 };
+}
+
+function normalizeMonthData(value?: Partial<MonthData> & { savingsSetAside?: number }): MonthData {
+  const legacySavings = value?.savingsSetAside ?? 0;
+  return {
+    budget: value?.budget ?? 0,
+    expenses: value?.expenses ?? [],
+    savingsEnabled: value?.savingsEnabled ?? false,
+    savingsGoal: value?.savingsGoal ?? legacySavings,
+    savingsSaved: value?.savingsSaved ?? legacySavings,
+  };
 }
 
 function normalizeData(raw: string | null, currentMonthKey: string): StoredData {
-  if (!raw) {
-    return { categories: DEFAULT_CATEGORIES, months: { [currentMonthKey]: createEmptyMonth() } };
-  }
+  if (!raw) return { categories: DEFAULT_CATEGORIES, months: { [currentMonthKey]: createEmptyMonth() } };
 
   const parsed = JSON.parse(raw) as Partial<StoredData> & Partial<LegacyData>;
   if (parsed.categories && parsed.months) {
     const normalizedMonths = Object.fromEntries(
-      Object.entries(parsed.months).map(([monthKey, value]) => [
-        monthKey,
-        {
-          budget: value.budget ?? 0,
-          expenses: value.expenses ?? [],
-          savingsEnabled: value.savingsEnabled ?? false,
-          savingsSetAside: value.savingsSetAside ?? 0,
-        },
-      ])
+      Object.entries(parsed.months).map(([monthKey, value]) => [monthKey, normalizeMonthData(value)])
     );
     return {
       categories: parsed.categories.length ? parsed.categories : DEFAULT_CATEGORIES,
@@ -89,7 +106,8 @@ function normalizeData(raw: string | null, currentMonthKey: string): StoredData 
           budget: parsed.budget ?? 0,
           expenses: parsed.expenses ?? [],
           savingsEnabled: false,
-          savingsSetAside: 0,
+          savingsGoal: 0,
+          savingsSaved: 0,
         },
       },
     };
@@ -108,8 +126,8 @@ function LoadingScreen() {
   useEffect(() => {
     const bounce = Animated.loop(
       Animated.sequence([
-        Animated.timing(jarY, { toValue: -6, duration: 500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(jarY, { toValue: 0, duration: 500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(jarY, { toValue: -6, duration: 520, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(jarY, { toValue: 0, duration: 520, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       ])
     );
     const dropA = Animated.loop(
@@ -124,7 +142,7 @@ function LoadingScreen() {
     );
     const dropB = Animated.loop(
       Animated.sequence([
-        Animated.delay(300),
+        Animated.delay(280),
         Animated.parallel([
           Animated.timing(opacityB, { toValue: 1, duration: 100, useNativeDriver: true }),
           Animated.timing(moneyB, { toValue: 170, duration: 1120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
@@ -148,13 +166,13 @@ function LoadingScreen() {
       <StatusBar style="light" />
       <View style={styles.loadingInner}>
         <Text style={styles.loadingBrand}>Dini&apos;s Money Jar</Text>
-        <Text style={styles.loadingTitle}>Counting coins, stacking bills, and loading your months...</Text>
+        <Text style={styles.loadingTitle}>Coins are falling into the jar while your months wake up...</Text>
         <View style={styles.loadingStage}>
           <Animated.View style={[styles.fallingMoney, styles.fallingMoneyLeft, { opacity: opacityA, transform: [{ translateY: moneyA }, { rotate: '-10deg' }] }]}>
-            <Text style={styles.fallingMoneyText}>$</Text>
+            <Text style={styles.fallingMoneyText}>{'\u20AA'}</Text>
           </Animated.View>
           <Animated.View style={[styles.fallingMoney, styles.fallingMoneyRight, { opacity: opacityB, transform: [{ translateY: moneyB }, { rotate: '8deg' }] }]}>
-            <Text style={styles.fallingMoneyText}>$</Text>
+            <Text style={styles.fallingMoneyText}>{'\u20AA'}</Text>
           </Animated.View>
           <Animated.View style={{ transform: [{ translateY: jarY }] }}>
             <View style={styles.loadingJarLid} />
@@ -168,6 +186,30 @@ function LoadingScreen() {
   );
 }
 
+function JarGraphic({ fillAnim, hasBudget, isOverBudget }: { fillAnim: Animated.Value; hasBudget: boolean; isOverBudget: boolean }) {
+  return (
+    <View style={styles.jarGraphicWrap}>
+      <View style={styles.jarShadow} />
+      <View style={styles.jarLid} />
+      <View style={styles.jarGlass}>
+        <Animated.View style={[styles.jarFill, isOverBudget && styles.jarFillOver, { height: fillAnim }]} />
+        <View style={styles.jarHighlight} />
+        {hasBudget ? (
+          <>
+            <View style={[styles.jarBill, styles.jarBillOne]} />
+            <View style={[styles.jarBill, styles.jarBillTwo]} />
+            <View style={[styles.jarCoin, styles.jarCoinOne]} />
+            <View style={[styles.jarCoin, styles.jarCoinTwo]} />
+            <View style={[styles.jarCoin, styles.jarCoinThree]} />
+          </>
+        ) : (
+          <Text style={styles.jarEmptyText}>Set a budget to fill your jar</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
 export default function App() {
   const currentMonthKey = getMonthKey();
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
@@ -176,10 +218,10 @@ export default function App() {
   const [screenMode, setScreenMode] = useState<ScreenMode>('jar');
   const [selectedCategory, setSelectedCategory] = useState(DEFAULT_CATEGORIES[0].key);
   const [budgetInput, setBudgetInput] = useState('');
-  const [savingsInput, setSavingsInput] = useState('');
+  const [savingsGoalInput, setSavingsGoalInput] = useState('');
+  const [savingsAddInput, setSavingsAddInput] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expenseNote, setExpenseNote] = useState('');
-  const [expenseFilter, setExpenseFilter] = useState<ExpenseFilter>('all');
   const [newCategoryLabel, setNewCategoryLabel] = useState('');
   const [newCategoryColor, setNewCategoryColor] = useState(COLOR_OPTIONS[0]);
   const [renameKey, setRenameKey] = useState<string | null>(null);
@@ -217,17 +259,17 @@ export default function App() {
 
   const month = months[selectedMonthKey] ?? createEmptyMonth();
   const spent = month.expenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const setAside = month.savingsEnabled ? month.savingsSetAside : 0;
-  const spendingBudget = Math.max(month.budget - setAside, 0);
-  const remaining = spendingBudget - spent;
-  const spentPercent = spendingBudget > 0 ? Math.min((spent / spendingBudget) * 100, 999) : 0;
-  const isOverBudget = remaining < 0;
-  const fillHeight = spendingBudget > 0 ? 24 + Math.max(0, Math.min(remaining / spendingBudget, 1)) * 250 : 24;
+  const leftToSpend = month.budget - spent;
+  const isOverBudget = leftToSpend < 0;
+  const spendingProgress = month.budget > 0 ? Math.min(spent / month.budget, 1) : 0;
+  const savingsProgress = month.savingsGoal > 0 ? Math.min(month.savingsSaved / month.savingsGoal, 1) : 0;
+  const fillHeight = month.budget > 0 ? 24 + Math.max(0, Math.min(leftToSpend / month.budget, 1)) * 250 : 24;
 
   useEffect(() => {
     setBudgetInput(month.budget ? `${month.budget}` : '');
-    setSavingsInput(month.savingsSetAside ? `${month.savingsSetAside}` : '');
-  }, [month.budget, month.savingsSetAside, selectedMonthKey]);
+    setSavingsGoalInput(month.savingsGoal ? `${month.savingsGoal}` : '');
+    setSavingsAddInput('');
+  }, [month.budget, month.savingsGoal, selectedMonthKey]);
 
   useEffect(() => {
     if (!categories.some((category) => category.key === selectedCategory)) {
@@ -236,7 +278,7 @@ export default function App() {
   }, [categories, selectedCategory]);
 
   useEffect(() => {
-    Animated.spring(jarFill, { toValue: fillHeight, friction: 10, tension: 55, useNativeDriver: false }).start();
+    Animated.spring(jarFill, { toValue: fillHeight, friction: 10, tension: 60, useNativeDriver: false }).start();
   }, [fillHeight, jarFill]);
 
   const monthOptions = useMemo(() => {
@@ -268,8 +310,9 @@ export default function App() {
             label: getMonthLabel(monthKey),
             budget: value.budget,
             spent: monthSpent,
-            saved: value.savingsEnabled ? value.savingsSetAside : 0,
-            remaining: Math.max(value.budget - (value.savingsEnabled ? value.savingsSetAside : 0), 0) - monthSpent,
+            saved: value.savingsSaved,
+            savingsGoal: value.savingsGoal,
+            remaining: value.budget - monthSpent,
             breakdown: categories
               .map((category) => ({
                 label: category.label,
@@ -282,19 +325,14 @@ export default function App() {
     [categories, months]
   );
 
-  const filteredExpenses = useMemo(
-    () => (expenseFilter === 'all' ? month.expenses : month.expenses.filter((expense) => expense.category === expenseFilter)),
-    [expenseFilter, month.expenses]
-  );
-
   const csvText = useMemo(() => {
     const rows = historyRows.map(
       (row) =>
-        `${row.label},${row.budget.toFixed(2)},${row.spent.toFixed(2)},${row.saved.toFixed(2)},${row.remaining.toFixed(2)},${row.breakdown
+        `${row.label},${row.budget.toFixed(2)},${row.spent.toFixed(2)},${row.saved.toFixed(2)},${row.savingsGoal.toFixed(2)},${row.remaining.toFixed(2)},${row.breakdown
           .map((entry) => `${entry.label}: ${entry.total.toFixed(2)}`)
           .join(' | ')}`
     );
-    return ['Month,Budget,Spent,Savings Set Aside,Left To Spend,Categories', ...rows].join('\n');
+    return ['Month,Budget,Spent,Saved,Savings Goal,Left To Spend,Categories', ...rows].join('\n');
   }, [historyRows]);
 
   function updateMonth(nextMonth: MonthData) {
@@ -308,41 +346,41 @@ export default function App() {
       return;
     }
     if (month.budget > 0 && parsed > month.budget) {
-      Alert.alert('Budget locked', 'Once a month starts, you can keep the budget the same or lower it, but not raise it.');
-      return;
-    }
-    if (month.savingsEnabled && parsed < month.savingsSetAside) {
-      Alert.alert('Lower savings first', 'This budget would be smaller than the savings you already tucked away for this month.');
+      Alert.alert('Budget locked', 'Once you set a monthly budget, you can keep it the same or lower it, but not raise it.');
       return;
     }
     updateMonth({ ...month, budget: parsed });
   }
 
   function toggleSavings() {
-    if (!month.savingsEnabled) {
-      updateMonth({ ...month, savingsEnabled: true, savingsSetAside: month.savingsSetAside });
+    if (month.savingsEnabled) {
+      updateMonth({ ...month, savingsEnabled: false, savingsGoal: 0, savingsSaved: 0 });
+      setSavingsGoalInput('');
+      setSavingsAddInput('');
       return;
     }
-    updateMonth({ ...month, savingsEnabled: false, savingsSetAside: 0 });
-    setSavingsInput('');
+    updateMonth({ ...month, savingsEnabled: true });
   }
 
-  function saveSavings() {
-    if (!month.savingsEnabled) {
-      updateMonth({ ...month, savingsEnabled: false, savingsSetAside: 0 });
-      setSavingsInput('');
-      return;
-    }
-    const parsed = Number.parseFloat(savingsInput);
+  function saveSavingsGoal() {
+    if (!month.savingsEnabled) return;
+    const parsed = Number.parseFloat(savingsGoalInput);
     if (Number.isNaN(parsed) || parsed < 0) {
-      Alert.alert('Enter savings', 'Add how much you want to tuck aside this month.');
+      Alert.alert('Enter savings target', 'Add the amount you want to put aside this month.');
       return;
     }
-    if (parsed > month.budget) {
-      Alert.alert('Too high', 'Savings set aside cannot be bigger than the full monthly budget.');
+    updateMonth({ ...month, savingsGoal: parsed });
+  }
+
+  function addSavings() {
+    if (!month.savingsEnabled) return;
+    const parsed = Number.parseFloat(savingsAddInput);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      Alert.alert('Enter saved amount', 'Add how much you tucked away this time.');
       return;
     }
-    updateMonth({ ...month, savingsEnabled: true, savingsSetAside: parsed });
+    updateMonth({ ...month, savingsSaved: month.savingsSaved + parsed });
+    setSavingsAddInput('');
   }
 
   function addExpense() {
@@ -367,22 +405,8 @@ export default function App() {
     updateMonth({ ...month, expenses: month.expenses.filter((expense) => expense.id !== id) });
   }
 
-  function confirmDeleteExpense(id: string) {
-    Alert.alert('Delete this expense?', 'This action cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteExpense(id) },
-    ]);
-  }
-
-  function duplicateExpense(expense: Expense) {
-    updateMonth({
-      ...month,
-      expenses: [{ ...expense, id: `${Date.now()}`, createdAt: new Date().toISOString() }, ...month.expenses],
-    });
-  }
-
   function resetMonth() {
-    Alert.alert('Reset this month?', 'This clears the current budget and expenses for this month only.', [
+    Alert.alert('Reset this month?', 'This clears the current budget, savings, and expenses for this month only.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Reset', style: 'destructive', onPress: () => updateMonth(createEmptyMonth()) },
     ]);
@@ -434,8 +458,14 @@ export default function App() {
       <StatusBar style="light" />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
-          <Text style={styles.brand}>Dini&apos;s Money Jar</Text>
-          <Text style={styles.heroTitle}>Cute jar, cute icon, better month tracking.</Text>
+          <View style={styles.heroTopRow}>
+            <View style={styles.heroCopy}>
+              <Text style={styles.brand}>Dini&apos;s Money Jar</Text>
+              <Text style={styles.heroTitle}>{getTodayLabel()}</Text>
+              <Text style={styles.heroSubtitle}>Your spending budget stays locked for the month, while savings get tracked separately in their own cute jar plan.</Text>
+            </View>
+            <Image source={require('./assets/icon.png')} style={styles.heroIcon} resizeMode="contain" />
+          </View>
         </View>
 
         <View style={styles.tabs}>
@@ -461,19 +491,8 @@ export default function App() {
           <>
             <View style={styles.card}>
               <Text style={styles.title}>Money jar</Text>
-              <Text style={styles.subtitle}>Watching {getMonthLabel(selectedMonthKey)}. The jar empties as you spend.</Text>
-              <View style={styles.progressHeader}>
-                <Text style={styles.progressLabel}>Budget used</Text>
-                <Text style={[styles.progressValue, isOverBudget && styles.overBudgetText]}>{spentPercent.toFixed(0)}%</Text>
-              </View>
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${Math.min(spentPercent, 100)}%` }, isOverBudget && styles.progressFillOver]} />
-              </View>
-              <View style={styles.jarWrap}>
-                <View style={styles.jarGlass}>
-                  <Animated.View style={[styles.jarFill, { height: jarFill }]} />
-                </View>
-              </View>
+              <Text style={styles.subtitle}>Watching {getMonthLabel(selectedMonthKey)}. This jar drains only when you spend your budget.</Text>
+              <JarGraphic fillAnim={jarFill} hasBudget={month.budget > 0} isOverBudget={isOverBudget} />
               <View style={styles.row}>
                 <View style={[styles.stat, { backgroundColor: '#ffb3c7' }]}>
                   <Text style={styles.statLabel}>Spent</Text>
@@ -481,12 +500,21 @@ export default function App() {
                 </View>
                 <View style={[styles.stat, { backgroundColor: '#b7f7cb' }]}>
                   <Text style={styles.statLabel}>Left to spend</Text>
-                  <Text style={[styles.statValue, isOverBudget && styles.overBudgetText]}>{formatCurrency(remaining)}</Text>
+                  <Text style={[styles.statValue, isOverBudget && styles.overBudgetText]}>{formatCurrency(leftToSpend)}</Text>
                 </View>
               </View>
               <View style={[styles.stat, styles.singleStat, { backgroundColor: '#ffe38a' }]}>
-                <Text style={styles.statLabel}>Savings tucked away</Text>
-                <Text style={styles.statValue}>{formatCurrency(setAside)}</Text>
+                <Text style={styles.statLabel}>Savings tucked away this month</Text>
+                <Text style={styles.statValue}>{formatCurrency(month.savingsSaved)}</Text>
+              </View>
+              <View style={styles.progressBlock}>
+                <View style={styles.progressHeader}>
+                  <Text style={styles.progressLabel}>Budget used</Text>
+                  <Text style={styles.progressValue}>{Math.round(spendingProgress * 100)}%</Text>
+                </View>
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, isOverBudget && styles.progressFillOver, { width: `${Math.min(spendingProgress * 100, 100)}%` }]} />
+                </View>
               </View>
             </View>
 
@@ -500,13 +528,6 @@ export default function App() {
                 ))}
               </View>
               <TextInput style={styles.input} value={expenseAmount} onChangeText={setExpenseAmount} keyboardType="decimal-pad" placeholder="How much did you spend?" placeholderTextColor="#7d6b91" />
-              <View style={styles.chipWrap}>
-                {QUICK_EXPENSE_AMOUNTS.map((amount) => (
-                  <Pressable key={amount} onPress={() => setExpenseAmount(`${amount}`)} style={styles.quickChip}>
-                    <Text style={styles.quickChipText}>{formatCurrency(amount)}</Text>
-                  </Pressable>
-                ))}
-              </View>
               <TextInput style={styles.input} value={expenseNote} onChangeText={setExpenseNote} placeholder="Quick note" placeholderTextColor="#7d6b91" />
               <Pressable onPress={addExpense} style={styles.primaryButton}>
                 <Text style={styles.primaryButtonText}>Add expense</Text>
@@ -547,26 +568,49 @@ export default function App() {
                   {month.savingsEnabled ? <Text style={styles.checkboxText}>✓</Text> : null}
                 </View>
                 <View style={styles.savingsCopy}>
-                  <Text style={styles.subheading}>Put money aside this month</Text>
-                  <Text style={styles.subtitle}>Turn this on when you tuck savings away before spending the rest.</Text>
+                  <Text style={styles.subheading}>I&apos;m putting money aside this month</Text>
+                  <Text style={styles.subtitle}>This does not lower your spending budget. It only tracks savings separately.</Text>
                 </View>
               </Pressable>
               {month.savingsEnabled ? (
                 <>
-                  <TextInput
-                    style={styles.input}
-                    value={savingsInput}
-                    onChangeText={setSavingsInput}
-                    keyboardType="decimal-pad"
-                    placeholder="How much are you saving?"
-                    placeholderTextColor="#7d6b91"
-                  />
-                  <Pressable onPress={saveSavings} style={styles.primaryButton}>
-                    <Text style={styles.primaryButtonText}>Save savings amount</Text>
+                  <TextInput style={styles.input} value={savingsGoalInput} onChangeText={setSavingsGoalInput} keyboardType="decimal-pad" placeholder="Monthly savings plan" placeholderTextColor="#7d6b91" />
+                  <View style={styles.chipWrap}>
+                    {QUICK_SAVINGS.map((amount) => (
+                      <Pressable key={amount} onPress={() => setSavingsGoalInput(`${amount}`)} style={styles.quickChip}>
+                        <Text style={styles.quickChipText}>{formatCurrency(amount)}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Pressable onPress={saveSavingsGoal} style={styles.primaryButton}>
+                    <Text style={styles.primaryButtonText}>Save monthly savings plan</Text>
                   </Pressable>
+                  <TextInput style={styles.input} value={savingsAddInput} onChangeText={setSavingsAddInput} keyboardType="decimal-pad" placeholder="How much did you save today?" placeholderTextColor="#7d6b91" />
+                  <Pressable onPress={addSavings} style={styles.secondaryButtonStretch}>
+                    <Text style={styles.secondaryButtonText}>Add to savings total</Text>
+                  </Pressable>
+                  <View style={styles.row}>
+                    <View style={[styles.stat, { backgroundColor: '#ffe38a' }]}>
+                      <Text style={styles.statLabel}>Monthly goal</Text>
+                      <Text style={styles.statValue}>{formatCurrency(month.savingsGoal)}</Text>
+                    </View>
+                    <View style={[styles.stat, { backgroundColor: '#b7f7cb' }]}>
+                      <Text style={styles.statLabel}>Saved so far</Text>
+                      <Text style={styles.statValue}>{formatCurrency(month.savingsSaved)}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.progressBlock}>
+                    <View style={styles.progressHeader}>
+                      <Text style={styles.progressLabel}>Savings goal progress</Text>
+                      <Text style={styles.progressValue}>{Math.round(savingsProgress * 100)}%</Text>
+                    </View>
+                    <View style={styles.progressTrack}>
+                      <View style={[styles.progressFill, styles.savingsProgressFill, { width: `${Math.min(savingsProgress * 100, 100)}%` }]} />
+                    </View>
+                  </View>
                 </>
               ) : (
-                <Text style={styles.subtitle}>No savings tucked away for this month yet.</Text>
+                <Text style={styles.subtitle}>Turn this on whenever you want to track money you set aside in addition to your spending budget.</Text>
               )}
             </View>
 
@@ -591,12 +635,14 @@ export default function App() {
                 <View key={category.key} style={styles.categoryRow}>
                   <View style={[styles.swatch, { backgroundColor: category.color }]} />
                   <Text style={styles.categoryRowText}>{category.label}</Text>
-                  <Pressable onPress={() => { setRenameKey(category.key); setRenameValue(category.label); }} style={styles.smallButton}>
-                    <Text style={styles.smallButtonText}>Edit</Text>
-                  </Pressable>
-                  <Pressable onPress={() => removeCategory(category.key)} style={styles.smallDanger}>
-                    <Text style={styles.smallDangerText}>Delete</Text>
-                  </Pressable>
+                  <View style={styles.categoryActions}>
+                    <Pressable onPress={() => { setRenameKey(category.key); setRenameValue(category.label); }} style={styles.smallButton}>
+                      <Text style={styles.smallButtonText}>Edit</Text>
+                    </Pressable>
+                    <Pressable onPress={() => removeCategory(category.key)} style={styles.smallDanger}>
+                      <Text style={styles.smallDangerText}>Delete</Text>
+                    </Pressable>
+                  </View>
                 </View>
               ))}
               {renameKey ? (
@@ -627,20 +673,10 @@ export default function App() {
 
             <View style={styles.card}>
               <Text style={styles.title}>Recent spending</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.monthRow}>
-                <Pressable onPress={() => setExpenseFilter('all')} style={[styles.monthChip, expenseFilter === 'all' && styles.monthChipActive]}>
-                  <Text style={[styles.monthText, expenseFilter === 'all' && styles.monthTextActive]}>All</Text>
-                </Pressable>
-                {categories.map((category) => (
-                  <Pressable key={category.key} onPress={() => setExpenseFilter(category.key)} style={[styles.monthChip, expenseFilter === category.key && styles.monthChipActive]}>
-                    <Text style={[styles.monthText, expenseFilter === category.key && styles.monthTextActive]}>{category.label}</Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-              {filteredExpenses.length === 0 ? (
+              {month.expenses.length === 0 ? (
                 <Text style={styles.subtitle}>No expenses in this month yet.</Text>
               ) : (
-                filteredExpenses.map((expense) => {
+                month.expenses.map((expense) => {
                   const category = categories.find((entry) => entry.key === expense.category);
                   return (
                     <View key={expense.id} style={styles.expenseRow}>
@@ -651,14 +687,9 @@ export default function App() {
                       </View>
                       <View style={styles.expenseSide}>
                         <Text style={styles.expenseAmount}>{formatCurrency(expense.amount)}</Text>
-                        <View style={styles.expenseActions}>
-                          <Pressable onPress={() => duplicateExpense(expense)}>
-                            <Text style={styles.copyText}>Copy</Text>
-                          </Pressable>
-                          <Pressable onPress={() => confirmDeleteExpense(expense.id)}>
-                            <Text style={styles.deleteText}>Delete</Text>
-                          </Pressable>
-                        </View>
+                        <Pressable onPress={() => deleteExpense(expense.id)}>
+                          <Text style={styles.deleteText}>Delete</Text>
+                        </Pressable>
                       </View>
                     </View>
                   );
@@ -672,7 +703,7 @@ export default function App() {
           <>
             <View style={styles.card}>
               <Text style={styles.title}>Month-by-month history</Text>
-              <Text style={styles.subtitle}>See how much you spent, saved, and what you spent it on every month.</Text>
+              <Text style={styles.subtitle}>See how much you spent, how much you saved, what you spent it on, and export it like a spreadsheet.</Text>
               <Pressable onPress={shareCsv} style={styles.secondaryButton}>
                 <Text style={styles.secondaryButtonText}>Share CSV</Text>
               </Pressable>
@@ -683,7 +714,7 @@ export default function App() {
                 <View style={styles.historyHeader}>
                   <View>
                     <Text style={styles.title}>{row.label}</Text>
-                    <Text style={styles.subtitle}>{formatCurrency(row.spent)} spent, {formatCurrency(row.saved)} tucked away</Text>
+                    <Text style={styles.subtitle}>{formatCurrency(row.spent)} spent, {formatCurrency(row.saved)} saved</Text>
                   </View>
                   <Pressable onPress={() => setSelectedMonthKey(row.monthKey)} style={styles.secondaryButton}>
                     <Text style={styles.secondaryButtonText}>Open month</Text>
@@ -709,6 +740,10 @@ export default function App() {
                     <Text style={styles.statValue}>{formatCurrency(row.remaining)}</Text>
                   </View>
                 </View>
+                <View style={[styles.stat, styles.singleStat, { backgroundColor: '#f4eeff' }]}>
+                  <Text style={styles.statLabel}>Savings plan</Text>
+                  <Text style={styles.statValue}>{formatCurrency(row.savingsGoal)}</Text>
+                </View>
                 <Text style={styles.subheading}>Spent on what</Text>
                 {row.breakdown.length === 0 ? (
                   <Text style={styles.subtitle}>No spending recorded in this month yet.</Text>
@@ -732,9 +767,13 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#24134d' },
   content: { padding: 20, paddingBottom: 40, gap: 16, backgroundColor: '#24134d' },
-  hero: { backgroundColor: '#ff5d8f', borderRadius: 28, padding: 24 },
-  brand: { color: '#fff2a8', fontWeight: '800', marginBottom: 8, textTransform: 'uppercase' },
-  heroTitle: { color: '#fff', fontSize: 28, fontWeight: '900', lineHeight: 34 },
+  hero: { backgroundColor: '#ff5d8f', borderRadius: 28, padding: 24, shadowColor: '#110320', shadowOpacity: 0.24, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 8 },
+  heroTopRow: { flexDirection: 'row', gap: 14, alignItems: 'center' },
+  heroCopy: { flex: 1, gap: 8 },
+  heroIcon: { width: 82, height: 82, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.22)' },
+  brand: { color: '#fff2a8', fontWeight: '800', textTransform: 'uppercase' },
+  heroTitle: { color: '#fff', fontSize: 26, fontWeight: '900', lineHeight: 32 },
+  heroSubtitle: { color: '#ffe6f0', fontSize: 14, lineHeight: 20 },
   tabs: { flexDirection: 'row', backgroundColor: '#3a236f', borderRadius: 999, padding: 6 },
   tab: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 999 },
   tabActive: { backgroundColor: '#ffe38a' },
@@ -749,21 +788,35 @@ const styles = StyleSheet.create({
   monthChipActive: { backgroundColor: '#7c7cff' },
   monthText: { color: '#402a66', fontWeight: '700' },
   monthTextActive: { color: '#fff' },
-  jarWrap: { alignItems: 'center', paddingVertical: 8 },
-  jarGlass: { width: 220, height: 300, borderRadius: 60, borderWidth: 6, borderColor: 'rgba(255,255,255,0.6)', backgroundColor: 'rgba(189,234,255,0.18)', overflow: 'hidden', justifyContent: 'flex-end' },
-  jarFill: { marginHorizontal: 12, marginBottom: 12, borderRadius: 40, backgroundColor: '#7fe7a3' },
+  jarGraphicWrap: { alignItems: 'center', paddingVertical: 8 },
+  jarShadow: { position: 'absolute', bottom: 8, width: 170, height: 24, borderRadius: 999, backgroundColor: 'rgba(36,16,66,0.12)' },
+  jarLid: { width: 170, height: 30, borderRadius: 20, backgroundColor: '#ff7cad', marginBottom: -8, zIndex: 2 },
+  jarGlass: { width: 220, height: 300, borderRadius: 60, borderWidth: 6, borderColor: 'rgba(255,255,255,0.72)', backgroundColor: 'rgba(177,234,255,0.2)', overflow: 'hidden', justifyContent: 'flex-end' },
+  jarFill: { position: 'absolute', left: 12, right: 12, bottom: 12, borderRadius: 40, backgroundColor: '#7fe7a3' },
+  jarFillOver: { backgroundColor: '#ff9bb7' },
+  jarHighlight: { position: 'absolute', left: 28, top: 28, width: 34, height: 190, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.22)' },
+  jarBill: { position: 'absolute', width: 74, height: 26, borderRadius: 8, backgroundColor: '#d5ffd8', borderWidth: 2, borderColor: '#69b574' },
+  jarBillOne: { right: 34, bottom: 86, transform: [{ rotate: '-11deg' }] },
+  jarBillTwo: { left: 42, bottom: 118, transform: [{ rotate: '8deg' }] },
+  jarCoin: { position: 'absolute', width: 28, height: 28, borderRadius: 999, backgroundColor: '#ffe38a', borderWidth: 2, borderColor: '#d7ad34' },
+  jarCoinOne: { left: 50, bottom: 56 },
+  jarCoinTwo: { left: 92, bottom: 44 },
+  jarCoinThree: { right: 48, bottom: 54 },
+  jarEmptyText: { position: 'absolute', top: 126, left: 42, right: 42, textAlign: 'center', color: '#5d5187', fontWeight: '700' },
   row: { flexDirection: 'row', gap: 12 },
   stat: { flex: 1, borderRadius: 20, padding: 16, minHeight: 100, justifyContent: 'space-between' },
-  singleStat: { minHeight: 90 },
+  singleStat: { minHeight: 84 },
   statLabel: { color: '#3b234f', fontWeight: '700' },
   statValue: { color: '#241042', fontSize: 26, fontWeight: '900' },
   overBudgetText: { color: '#d14a76' },
+  progressBlock: { gap: 8 },
   progressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   progressLabel: { color: '#3b234f', fontWeight: '700' },
   progressValue: { color: '#241042', fontWeight: '900' },
   progressTrack: { height: 10, backgroundColor: '#ebe3ff', borderRadius: 999, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: '#7c7cff' },
   progressFillOver: { backgroundColor: '#d14a76' },
+  savingsProgressFill: { backgroundColor: '#44c980' },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   categoryChip: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10 },
   categoryText: { color: '#402a66', fontWeight: '700' },
@@ -778,13 +831,14 @@ const styles = StyleSheet.create({
   quickChipText: { color: '#5d3a00', fontWeight: '700' },
   savingsToggle: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f8f2ff', borderRadius: 18, padding: 12 },
   savingsToggleActive: { backgroundColor: '#efe6ff' },
-  checkbox: { width: 24, height: 24, borderRadius: 8, borderWidth: 2, borderColor: '#8d79b8', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  checkbox: { width: 26, height: 26, borderRadius: 8, borderWidth: 2, borderColor: '#8d79b8', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   checkboxActive: { backgroundColor: '#7c7cff', borderColor: '#7c7cff' },
   checkboxText: { color: '#fff', fontWeight: '900' },
   savingsCopy: { flex: 1, gap: 2 },
-  categoryRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#f8f2ff', borderRadius: 18, padding: 12 },
+  categoryRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#f8f2ff', borderRadius: 18, padding: 12, flexWrap: 'wrap' },
   swatch: { width: 18, height: 18, borderRadius: 999 },
   categoryRowText: { flex: 1, color: '#241042', fontWeight: '700' },
+  categoryActions: { flexDirection: 'row', gap: 8 },
   smallButton: { backgroundColor: '#e7deff', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
   smallButtonText: { color: '#5a3f8a', fontSize: 12, fontWeight: '700' },
   smallDanger: { backgroundColor: '#ffe5ec', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
@@ -800,9 +854,7 @@ const styles = StyleSheet.create({
   expenseText: { flex: 1, gap: 4 },
   expenseTitle: { color: '#241042', fontWeight: '800', fontSize: 16 },
   expenseSide: { alignItems: 'flex-end', gap: 6 },
-  expenseActions: { flexDirection: 'row', gap: 10 },
   expenseAmount: { color: '#241042', fontWeight: '800' },
-  copyText: { color: '#5a3f8a', fontWeight: '700', fontSize: 13 },
   deleteText: { color: '#d14a76', fontWeight: '700', fontSize: 13 },
   historyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
   loadingScreen: { flex: 1, backgroundColor: '#24134d' },
@@ -818,3 +870,5 @@ const styles = StyleSheet.create({
   loadingJar: { width: 180, height: 230, borderRadius: 54, borderWidth: 6, borderColor: 'rgba(255,255,255,0.6)', backgroundColor: 'rgba(189,234,255,0.16)', justifyContent: 'flex-end', overflow: 'hidden' },
   loadingJarFill: { marginHorizontal: 10, marginBottom: 10, height: 108, borderRadius: 34, backgroundColor: '#7fe7a3' },
 });
+
+
