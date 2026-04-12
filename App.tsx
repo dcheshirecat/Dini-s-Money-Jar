@@ -712,7 +712,7 @@ const styles = StyleSheet.create({
   monthText: { color: '#402a66', fontWeight: '700' },
   monthTextActive: { color: '#fff' },
   jarWrap: { alignItems: 'center', paddingVertical: 8 },
-  jarGlass: { width: 220, height: 300, borderRadius: 60, borderWidth: 6, borderColor: 'rgba(255,255,255,0.6)', backgroundColor: 'rgba(189,234,255,0.18)', overflow: 'hidden', justifyContent: 'flex-end' },
+  jarGlass: { width: 220, height: 300, borderRadius: 60, borderWidth: 6, borderColor: '#b8a0e8', backgroundColor: 'rgba(180,210,255,0.15)', overflow: 'hidden', justifyContent: 'flex-end' },
   jarFill: { marginHorizontal: 12, marginBottom: 12, borderRadius: 40, backgroundColor: '#7fe7a3' },
   row: { flexDirection: 'row', gap: 12 },
   stat: { flex: 1, borderRadius: 20, padding: 16, minHeight: 100, justifyContent: 'space-between' },
