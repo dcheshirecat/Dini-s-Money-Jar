@@ -45,7 +45,7 @@ jobs:
         working-directory: android
 
       - name: Bundle JavaScript
-        run: ./gradlew bundleDebugJsAndAssets
+        run: ./gradlew :app:bundleDebugJsAndAssets --stacktrace
         working-directory: android
 
       - name: Build debug APK
