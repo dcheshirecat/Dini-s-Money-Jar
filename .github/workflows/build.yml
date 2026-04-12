@@ -31,6 +31,7 @@ jobs:
 
       - name: Create placeholder assets
         run: |
+          sudo apt-get install -y imagemagick
           mkdir -p assets
           convert -size 1024x1024 xc:#24134D assets/icon.png
           convert -size 1242x2688 xc:#24134D assets/splash-icon.png
