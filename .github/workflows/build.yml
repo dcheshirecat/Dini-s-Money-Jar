@@ -45,7 +45,7 @@ jobs:
         working-directory: android
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug -PbundleInDebug=true --stacktrace
         working-directory: android
 
       - name: Upload APK artifact
