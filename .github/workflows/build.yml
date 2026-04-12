@@ -40,12 +40,22 @@ jobs:
       - name: Generate native Android project
         run: npx expo prebuild --platform android --no-install
 
+      - name: Bundle JavaScript
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file node_modules/expo/AppEntry.js \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
         working-directory: android
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug -PbundleInDebug=true --stacktrace
+        run: ./gradlew assembleDebug --stacktrace
         working-directory: android
 
       - name: Upload APK artifact
