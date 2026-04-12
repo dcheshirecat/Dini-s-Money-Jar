@@ -40,12 +40,11 @@ jobs:
       - name: Generate native Android project
         run: npx expo prebuild --platform android --no-install
 
+      - name: Enable JS bundling in debug builds
+        run: sed -i 's/react {/react {\n    bundleInDebug = true/' android/app/build.gradle
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-        working-directory: android
-
-      - name: Bundle JavaScript
-        run: ./gradlew :app:bundleDebugJsAndAssets --stacktrace
         working-directory: android
 
       - name: Build debug APK
