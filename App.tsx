@@ -17,10 +17,18 @@ import {
 
 type Category = { key: string; label: string; color: string };
 type Expense = { id: string; amount: number; category: string; note: string; createdAt: string };
-type MonthData = { budget: number; expenses: Expense[]; savingsEnabled: boolean; savingsSetAside: number };
+type IncomeEntry = { id: string; amount: number; source: string; note: string; createdAt: string };
+type MonthData = {
+  budget: number;
+  expenses: Expense[];
+  savingsEnabled: boolean;
+  savingsSetAside: number;
+  income: IncomeEntry[];
+  categoryBudgets: Record<string, number>;
+};
 type StoredData = { categories: Category[]; months: Record<string, MonthData> };
 type LegacyData = { monthKey: string; budget: number; expenses: Expense[] };
-type ScreenMode = 'jar' | 'tracker' | 'history';
+type ScreenMode = 'jar' | 'plan' | 'tracker' | 'history';
 
 const STORAGE_KEY = 'dinis-money-jar-monthly-budget';
 const DEFAULT_CATEGORIES: Category[] = [
@@ -32,10 +40,9 @@ const DEFAULT_CATEGORIES: Category[] = [
 ];
 const COLOR_OPTIONS = ['#ff8a80', '#ffd166', '#7c7cff', '#4ecdc4', '#ff9f6e', '#2ec4b6', '#a78bfa', '#ff5d8f'];
 const QUICK_BUDGETS = [250, 500, 750, 1000];
+const INCOME_SOURCES = ['Salary', 'Freelance', 'Gift', 'Transfer', 'Other'];
 
 function getMonthKey(date = new Date()) {
-  // Budget periods run from the 15th to the 14th of the next month.
-  // If today is before the 15th, we're still in last month's period.
   if (date.getDate() < 15) {
     const prev = new Date(date.getFullYear(), date.getMonth() - 1, 1);
     return `${prev.getFullYear()}-${`${prev.getMonth() + 1}`.padStart(2, '0')}`;
@@ -67,47 +74,34 @@ function formatCurrency(value: number) {
 }
 
 function createEmptyMonth(): MonthData {
-  return { budget: 0, expenses: [], savingsEnabled: false, savingsSetAside: 0 };
+  return { budget: 0, expenses: [], savingsEnabled: false, savingsSetAside: 0, income: [], categoryBudgets: {} };
 }
 
 function normalizeData(raw: string | null, currentMonthKey: string): StoredData {
-  if (!raw) {
-    return { categories: DEFAULT_CATEGORIES, months: { [currentMonthKey]: createEmptyMonth() } };
-  }
-
+  if (!raw) return { categories: DEFAULT_CATEGORIES, months: { [currentMonthKey]: createEmptyMonth() } };
   const parsed = JSON.parse(raw) as Partial<StoredData> & Partial<LegacyData>;
   if (parsed.categories && parsed.months) {
     const normalizedMonths = Object.fromEntries(
-      Object.entries(parsed.months).map(([monthKey, value]) => [
-        monthKey,
-        {
-          budget: value.budget ?? 0,
-          expenses: value.expenses ?? [],
-          savingsEnabled: value.savingsEnabled ?? false,
-          savingsSetAside: value.savingsSetAside ?? 0,
-        },
-      ])
+      Object.entries(parsed.months).map(([k, v]) => [k, {
+        budget: v.budget ?? 0,
+        expenses: v.expenses ?? [],
+        savingsEnabled: v.savingsEnabled ?? false,
+        savingsSetAside: v.savingsSetAside ?? 0,
+        income: v.income ?? [],
+        categoryBudgets: v.categoryBudgets ?? {},
+      }])
     );
     return {
       categories: parsed.categories.length ? parsed.categories : DEFAULT_CATEGORIES,
       months: Object.keys(normalizedMonths).length ? normalizedMonths : { [currentMonthKey]: createEmptyMonth() },
     };
   }
-
   if (parsed.monthKey) {
     return {
       categories: DEFAULT_CATEGORIES,
-      months: {
-        [parsed.monthKey]: {
-          budget: parsed.budget ?? 0,
-          expenses: parsed.expenses ?? [],
-          savingsEnabled: false,
-          savingsSetAside: 0,
-        },
-      },
+      months: { [parsed.monthKey]: { budget: parsed.budget ?? 0, expenses: parsed.expenses ?? [], savingsEnabled: false, savingsSetAside: 0, income: [], categoryBudgets: {} } },
     };
   }
-
   return { categories: DEFAULT_CATEGORIES, months: { [currentMonthKey]: createEmptyMonth() } };
 }
 
@@ -119,41 +113,29 @@ function LoadingScreen() {
   const opacityB = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const bounce = Animated.loop(
-      Animated.sequence([
-        Animated.timing(jarY, { toValue: -6, duration: 500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(jarY, { toValue: 0, duration: 500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-      ])
-    );
-    const dropA = Animated.loop(
-      Animated.sequence([
-        Animated.parallel([
-          Animated.timing(opacityA, { toValue: 1, duration: 100, useNativeDriver: true }),
-          Animated.timing(moneyA, { toValue: 170, duration: 1050, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-        ]),
-        Animated.timing(opacityA, { toValue: 0, duration: 120, useNativeDriver: true }),
-        Animated.timing(moneyA, { toValue: -80, duration: 1, useNativeDriver: true }),
-      ])
-    );
-    const dropB = Animated.loop(
-      Animated.sequence([
-        Animated.delay(300),
-        Animated.parallel([
-          Animated.timing(opacityB, { toValue: 1, duration: 100, useNativeDriver: true }),
-          Animated.timing(moneyB, { toValue: 170, duration: 1120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-        ]),
-        Animated.timing(opacityB, { toValue: 0, duration: 120, useNativeDriver: true }),
-        Animated.timing(moneyB, { toValue: -120, duration: 1, useNativeDriver: true }),
-      ])
-    );
-    bounce.start();
-    dropA.start();
-    dropB.start();
-    return () => {
-      bounce.stop();
-      dropA.stop();
-      dropB.stop();
-    };
+    const bounce = Animated.loop(Animated.sequence([
+      Animated.timing(jarY, { toValue: -6, duration: 500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      Animated.timing(jarY, { toValue: 0, duration: 500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+    ]));
+    const dropA = Animated.loop(Animated.sequence([
+      Animated.parallel([
+        Animated.timing(opacityA, { toValue: 1, duration: 100, useNativeDriver: true }),
+        Animated.timing(moneyA, { toValue: 170, duration: 1050, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      ]),
+      Animated.timing(opacityA, { toValue: 0, duration: 120, useNativeDriver: true }),
+      Animated.timing(moneyA, { toValue: -80, duration: 1, useNativeDriver: true }),
+    ]));
+    const dropB = Animated.loop(Animated.sequence([
+      Animated.delay(300),
+      Animated.parallel([
+        Animated.timing(opacityB, { toValue: 1, duration: 100, useNativeDriver: true }),
+        Animated.timing(moneyB, { toValue: 170, duration: 1120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      ]),
+      Animated.timing(opacityB, { toValue: 0, duration: 120, useNativeDriver: true }),
+      Animated.timing(moneyB, { toValue: -120, duration: 1, useNativeDriver: true }),
+    ]));
+    bounce.start(); dropA.start(); dropB.start();
+    return () => { bounce.stop(); dropA.stop(); dropB.stop(); };
   }, [jarY, moneyA, moneyB, opacityA, opacityB]);
 
   return (
@@ -196,7 +178,12 @@ export default function App() {
   const [newCategoryColor, setNewCategoryColor] = useState(COLOR_OPTIONS[0]);
   const [renameKey, setRenameKey] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [incomeAmount, setIncomeAmount] = useState('');
+  const [incomeSource, setIncomeSource] = useState(INCOME_SOURCES[0]);
+  const [incomeNote, setIncomeNote] = useState('');
+  const [categoryBudgetInputs, setCategoryBudgetInputs] = useState<Record<string, string>>({});
   const [ready, setReady] = useState(false);
+
   const jarFill = useRef(new Animated.Value(24)).current;
   const coinA = useRef(new Animated.Value(0)).current;
   const coinB = useRef(new Animated.Value(0)).current;
@@ -217,12 +204,8 @@ export default function App() {
       setSelectedCategory(normalized.categories[0]?.key ?? DEFAULT_CATEGORIES[0].key);
       setReady(true);
     }
-    load().catch(() => {
-      if (mounted) setReady(true);
-    });
-    return () => {
-      mounted = false;
-    };
+    load().catch(() => { if (mounted) setReady(true); });
+    return () => { mounted = false; };
   }, [currentMonthKey]);
 
   useEffect(() => {
@@ -233,11 +216,14 @@ export default function App() {
   }, [categories, months, ready]);
 
   const month = months[selectedMonthKey] ?? createEmptyMonth();
-  const spent = month.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const spent = month.expenses.reduce((sum, e) => sum + e.amount, 0);
   const setAside = month.savingsEnabled ? month.savingsSetAside : 0;
   const spendingBudget = Math.max(month.budget - setAside, 0);
   const remaining = spendingBudget - spent;
   const fillHeight = spendingBudget > 0 ? 24 + Math.max(0, Math.min(remaining / spendingBudget, 1)) * 250 : 24;
+  const totalIncome = month.income.reduce((sum, e) => sum + e.amount, 0);
+  const categoryBudgetTotal = Object.values(month.categoryBudgets).reduce((sum, v) => sum + v, 0);
+  const unallocated = Math.max(month.budget - categoryBudgetTotal, 0);
 
   useEffect(() => {
     setBudgetInput(month.budget ? `${month.budget}` : '');
@@ -245,7 +231,7 @@ export default function App() {
   }, [month.budget, month.savingsSetAside, selectedMonthKey]);
 
   useEffect(() => {
-    if (!categories.some((category) => category.key === selectedCategory)) {
+    if (!categories.some((c) => c.key === selectedCategory)) {
       setSelectedCategory(categories[0]?.key ?? DEFAULT_CATEGORIES[0].key);
     }
   }, [categories, selectedCategory]);
@@ -268,163 +254,140 @@ export default function App() {
 
   const monthOptions = useMemo(() => {
     const keys = new Set(Object.keys(months));
-    for (let index = -4; index <= 7; index += 1) keys.add(shiftMonth(currentMonthKey, index));
+    for (let i = -4; i <= 7; i++) keys.add(shiftMonth(currentMonthKey, i));
     return Array.from(keys).sort();
   }, [currentMonthKey, months]);
 
-  const categoryTotals = useMemo(
-    () =>
-      categories
-        .map((category) => ({
-          ...category,
-          total: month.expenses.filter((expense) => expense.category === category.key).reduce((sum, expense) => sum + expense.amount, 0),
-        }))
-        .filter((entry) => entry.total > 0)
-        .sort((left, right) => right.total - left.total),
+  const categoryTotals = useMemo(() =>
+    categories
+      .map(c => ({ ...c, total: month.expenses.filter(e => e.category === c.key).reduce((s, e) => s + e.amount, 0) }))
+      .filter(e => e.total > 0)
+      .sort((a, b) => b.total - a.total),
     [categories, month.expenses]
   );
 
-  const historyRows = useMemo(
-    () =>
-      Object.entries(months)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([monthKey, value]) => {
-          const monthSpent = value.expenses.reduce((sum, expense) => sum + expense.amount, 0);
-          return {
-            monthKey,
-            label: getPeriodLabel(monthKey),
-            budget: value.budget,
-            spent: monthSpent,
-            saved: value.savingsEnabled ? value.savingsSetAside : 0,
-            remaining: Math.max(value.budget - (value.savingsEnabled ? value.savingsSetAside : 0), 0) - monthSpent,
-            breakdown: categories
-              .map((category) => ({
-                label: category.label,
-                total: value.expenses.filter((expense) => expense.category === category.key).reduce((sum, expense) => sum + expense.amount, 0),
-              }))
-              .filter((entry) => entry.total > 0)
-              .sort((left, right) => right.total - left.total),
-          };
-        }),
+  const historyRows = useMemo(() =>
+    Object.entries(months)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([monthKey, v]) => {
+        const monthSpent = v.expenses.reduce((s, e) => s + e.amount, 0);
+        return {
+          monthKey,
+          label: getPeriodLabel(monthKey),
+          budget: v.budget,
+          spent: monthSpent,
+          saved: v.savingsEnabled ? v.savingsSetAside : 0,
+          income: (v.income ?? []).reduce((s, e) => s + e.amount, 0),
+          remaining: Math.max(v.budget - (v.savingsEnabled ? v.savingsSetAside : 0), 0) - monthSpent,
+          breakdown: categories
+            .map(c => ({ label: c.label, total: v.expenses.filter(e => e.category === c.key).reduce((s, e) => s + e.amount, 0) }))
+            .filter(e => e.total > 0)
+            .sort((a, b) => b.total - a.total),
+        };
+      }),
     [categories, months]
   );
 
   const csvText = useMemo(() => {
-    const rows = historyRows.map(
-      (row) =>
-        `${row.label},${row.budget.toFixed(2)},${row.spent.toFixed(2)},${row.saved.toFixed(2)},${row.remaining.toFixed(2)},${row.breakdown
-          .map((entry) => `${entry.label}: ${entry.total.toFixed(2)}`)
-          .join(' | ')}`
+    const rows = historyRows.map(r =>
+      `${r.label},${r.budget.toFixed(2)},${r.income.toFixed(2)},${r.spent.toFixed(2)},${r.saved.toFixed(2)},${r.remaining.toFixed(2)},${r.breakdown.map(e => `${e.label}: ${e.total.toFixed(2)}`).join(' | ')}`
     );
-    return ['Month,Budget,Spent,Savings Set Aside,Left To Spend,Categories', ...rows].join('\n');
+    return ['Month,Budget,Income,Spent,Savings,Left To Spend,Categories', ...rows].join('\n');
   }, [historyRows]);
 
-  function updateMonth(nextMonth: MonthData) {
-    setMonths((current) => ({ ...current, [selectedMonthKey]: nextMonth }));
+  function updateMonth(next: MonthData) {
+    setMonths(cur => ({ ...cur, [selectedMonthKey]: next }));
   }
 
   function saveBudget() {
     const parsed = Number.parseFloat(budgetInput);
-    if (Number.isNaN(parsed) || parsed <= 0) {
-      Alert.alert('Enter a budget', 'Choose how much spending money you have for this month.');
-      return;
-    }
-    if (month.budget > 0 && parsed > month.budget) {
-      Alert.alert('Budget locked', 'Once a month starts, you can keep the budget the same or lower it, but not raise it.');
-      return;
-    }
-    if (month.savingsEnabled && parsed < month.savingsSetAside) {
-      Alert.alert('Lower savings first', 'This budget would be smaller than the savings you already tucked away for this month.');
-      return;
-    }
+    if (Number.isNaN(parsed) || parsed <= 0) { Alert.alert('Enter a budget', 'Choose how much spending money you have for this month.'); return; }
+    if (month.budget > 0 && parsed > month.budget) { Alert.alert('Budget locked', 'You can lower the budget but not raise it once the month has started.'); return; }
+    if (month.savingsEnabled && parsed < month.savingsSetAside) { Alert.alert('Lower savings first', 'This budget would be smaller than the savings already tucked away.'); return; }
     updateMonth({ ...month, budget: parsed });
   }
 
   function toggleSavings() {
-    if (!month.savingsEnabled) {
-      updateMonth({ ...month, savingsEnabled: true, savingsSetAside: month.savingsSetAside });
-      return;
-    }
+    if (!month.savingsEnabled) { updateMonth({ ...month, savingsEnabled: true }); return; }
     updateMonth({ ...month, savingsEnabled: false, savingsSetAside: 0 });
     setSavingsInput('');
   }
 
   function saveSavings() {
-    if (!month.savingsEnabled) {
-      updateMonth({ ...month, savingsEnabled: false, savingsSetAside: 0 });
-      setSavingsInput('');
-      return;
-    }
+    if (!month.savingsEnabled) { updateMonth({ ...month, savingsEnabled: false, savingsSetAside: 0 }); setSavingsInput(''); return; }
     const parsed = Number.parseFloat(savingsInput);
-    if (Number.isNaN(parsed) || parsed < 0) {
-      Alert.alert('Enter savings', 'Add how much you want to tuck aside this month.');
-      return;
-    }
-    if (parsed > month.budget) {
-      Alert.alert('Too high', 'Savings set aside cannot be bigger than the full monthly budget.');
-      return;
-    }
+    if (Number.isNaN(parsed) || parsed < 0) { Alert.alert('Enter savings', 'Add how much you want to tuck aside.'); return; }
+    if (parsed > month.budget) { Alert.alert('Too high', 'Savings cannot exceed the full monthly budget.'); return; }
     updateMonth({ ...month, savingsEnabled: true, savingsSetAside: parsed });
   }
 
   function addExpense() {
     const parsed = Number.parseFloat(expenseAmount);
-    if (Number.isNaN(parsed) || parsed <= 0) {
-      Alert.alert('Enter an amount', 'Add how much you spent before saving the expense.');
-      return;
-    }
-    updateMonth({
-      ...month,
-      expenses: [
-        { id: `${Date.now()}`, amount: parsed, category: selectedCategory, note: expenseNote.trim(), createdAt: new Date().toISOString() },
-        ...month.expenses,
-      ],
-    });
+    if (Number.isNaN(parsed) || parsed <= 0) { Alert.alert('Enter an amount', 'Add how much you spent.'); return; }
+    updateMonth({ ...month, expenses: [{ id: `${Date.now()}`, amount: parsed, category: selectedCategory, note: expenseNote.trim(), createdAt: new Date().toISOString() }, ...month.expenses] });
     setExpenseAmount('');
     setExpenseNote('');
     setScreenMode('jar');
   }
 
   function deleteExpense(id: string) {
-    updateMonth({ ...month, expenses: month.expenses.filter((expense) => expense.id !== id) });
+    updateMonth({ ...month, expenses: month.expenses.filter(e => e.id !== id) });
   }
 
   function resetMonth() {
-    Alert.alert('Reset this month?', 'This clears the current budget and expenses for this month only.', [
+    Alert.alert('Reset this month?', 'This clears the budget, income, and expenses for this month only.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Reset', style: 'destructive', onPress: () => updateMonth(createEmptyMonth()) },
     ]);
+  }
+
+  function addIncome() {
+    const parsed = Number.parseFloat(incomeAmount);
+    if (Number.isNaN(parsed) || parsed <= 0) { Alert.alert('Enter an amount', 'How much did you receive?'); return; }
+    updateMonth({ ...month, income: [{ id: `${Date.now()}`, amount: parsed, source: incomeSource, note: incomeNote.trim(), createdAt: new Date().toISOString() }, ...month.income] });
+    setIncomeAmount('');
+    setIncomeNote('');
+  }
+
+  function deleteIncome(id: string) {
+    updateMonth({ ...month, income: month.income.filter(e => e.id !== id) });
+  }
+
+  function saveCategoryBudget(categoryKey: string) {
+    const raw = categoryBudgetInputs[categoryKey] ?? '';
+    const parsed = Number.parseFloat(raw);
+    if (Number.isNaN(parsed) || parsed < 0) { Alert.alert('Enter an amount', 'How much do you want to budget for this category?'); return; }
+    updateMonth({ ...month, categoryBudgets: { ...month.categoryBudgets, [categoryKey]: parsed } });
+    setCategoryBudgetInputs(prev => ({ ...prev, [categoryKey]: '' }));
   }
 
   function addCategory() {
     const trimmed = newCategoryLabel.trim();
     if (!trimmed) return;
     const base = trimmed.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const key = categories.some((category) => category.key === base) ? `${base}-${Date.now()}` : base;
-    setCategories((current) => [...current, { key, label: trimmed, color: newCategoryColor }]);
+    const key = categories.some(c => c.key === base) ? `${base}-${Date.now()}` : base;
+    setCategories(cur => [...cur, { key, label: trimmed, color: newCategoryColor }]);
     setSelectedCategory(key);
     setNewCategoryLabel('');
   }
 
   function saveRename() {
     if (!renameKey || !renameValue.trim()) return;
-    setCategories((current) => current.map((category) => (category.key === renameKey ? { ...category, label: renameValue.trim() } : category)));
+    setCategories(cur => cur.map(c => c.key === renameKey ? { ...c, label: renameValue.trim() } : c));
     setRenameKey(null);
     setRenameValue('');
   }
 
   function removeCategory(key: string) {
     if (categories.length <= 1) return;
-    const fallback = categories.find((category) => category.key !== key);
+    const fallback = categories.find(c => c.key !== key);
     if (!fallback) return;
-    setCategories((current) => current.filter((category) => category.key !== key));
-    setMonths((current) => {
+    setCategories(cur => cur.filter(c => c.key !== key));
+    setMonths(cur => {
       const next: Record<string, MonthData> = {};
-      Object.entries(current).forEach(([monthKey, value]) => {
-        next[monthKey] = {
-          ...value,
-          expenses: value.expenses.map((expense) => (expense.category === key ? { ...expense, category: fallback.key } : expense)),
-        };
+      Object.entries(cur).forEach(([mk, v]) => {
+        const { [key]: _removed, ...restBudgets } = v.categoryBudgets ?? {};
+        next[mk] = { ...v, expenses: v.expenses.map(e => e.category === key ? { ...e, category: fallback.key } : e), categoryBudgets: restBudgets };
       });
       return next;
     });
@@ -447,9 +410,11 @@ export default function App() {
         </View>
 
         <View style={styles.tabs}>
-          {(['jar', 'tracker', 'history'] as ScreenMode[]).map((mode) => (
+          {(['jar', 'plan', 'tracker', 'history'] as ScreenMode[]).map((mode) => (
             <Pressable key={mode} onPress={() => setScreenMode(mode)} style={[styles.tab, screenMode === mode && styles.tabActive]}>
-              <Text style={[styles.tabText, screenMode === mode && styles.tabTextActive]}>{mode === 'jar' ? 'Jar' : mode === 'tracker' ? 'Tracker' : 'History'}</Text>
+              <Text style={[styles.tabText, screenMode === mode && styles.tabTextActive]}>
+                {mode === 'jar' ? 'Jar' : mode === 'plan' ? 'Plan' : mode === 'tracker' ? 'Spend' : 'History'}
+              </Text>
             </Pressable>
           ))}
         </View>
@@ -457,14 +422,15 @@ export default function App() {
         <View style={styles.card}>
           <Text style={styles.title}>Month</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.monthRow}>
-            {monthOptions.map((monthKey) => (
-              <Pressable key={monthKey} onPress={() => setSelectedMonthKey(monthKey)} style={[styles.monthChip, selectedMonthKey === monthKey && styles.monthChipActive]}>
-                <Text style={[styles.monthText, selectedMonthKey === monthKey && styles.monthTextActive]}>{getMonthLabel(monthKey)}</Text>
+            {monthOptions.map((mk) => (
+              <Pressable key={mk} onPress={() => setSelectedMonthKey(mk)} style={[styles.monthChip, selectedMonthKey === mk && styles.monthChipActive]}>
+                <Text style={[styles.monthText, selectedMonthKey === mk && styles.monthTextActive]}>{getMonthLabel(mk)}</Text>
               </Pressable>
             ))}
           </ScrollView>
         </View>
 
+        {/* ── JAR SCREEN ── */}
         {screenMode === 'jar' ? (
           <>
             <View style={styles.card}>
@@ -501,18 +467,24 @@ export default function App() {
                   <Text style={styles.statValue}>{formatCurrency(remaining)}</Text>
                 </View>
               </View>
-              <View style={[styles.stat, styles.singleStat, { backgroundColor: '#ffe38a' }]}>
-                <Text style={styles.statLabel}>Savings tucked away</Text>
-                <Text style={styles.statValue}>{formatCurrency(setAside)}</Text>
+              <View style={styles.row}>
+                <View style={[styles.stat, { backgroundColor: '#ffe38a' }]}>
+                  <Text style={styles.statLabel}>Savings tucked away</Text>
+                  <Text style={styles.statValue}>{formatCurrency(setAside)}</Text>
+                </View>
+                <View style={[styles.stat, { backgroundColor: '#d8cbff' }]}>
+                  <Text style={styles.statLabel}>Income logged</Text>
+                  <Text style={styles.statValue}>{formatCurrency(totalIncome)}</Text>
+                </View>
               </View>
             </View>
 
             <View style={styles.card}>
               <Text style={styles.title}>Quick spend</Text>
               <View style={styles.chipWrap}>
-                {categories.map((category) => (
-                  <Pressable key={category.key} onPress={() => setSelectedCategory(category.key)} style={[styles.categoryChip, { backgroundColor: selectedCategory === category.key ? category.color : '#f2ebff' }]}>
-                    <Text style={[styles.categoryText, selectedCategory === category.key && styles.categoryTextActive]}>{category.label}</Text>
+                {categories.map((c) => (
+                  <Pressable key={c.key} onPress={() => setSelectedCategory(c.key)} style={[styles.categoryChip, { backgroundColor: selectedCategory === c.key ? c.color : '#f2ebff' }]}>
+                    <Text style={[styles.categoryText, selectedCategory === c.key && styles.categoryTextActive]}>{c.label}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -525,7 +497,8 @@ export default function App() {
           </>
         ) : null}
 
-        {screenMode === 'tracker' ? (
+        {/* ── PLAN SCREEN ── */}
+        {screenMode === 'plan' ? (
           <>
             <View style={styles.card}>
               <Text style={styles.title}>Monthly budget</Text>
@@ -535,9 +508,9 @@ export default function App() {
               <Text style={styles.subtitle}>
                 {month.budget > 0
                   ? `This month is locked at ${formatCurrency(month.budget)} unless you want to lower it.`
-                  : 'Pick your spending money for this month. Once saved, you can lower it later but not raise it.'}
+                  : 'Pick your spending money for this month. Once saved, you can lower it but not raise it.'}
               </Text>
-              <TextInput style={styles.input} value={budgetInput} onChangeText={setBudgetInput} keyboardType="decimal-pad" placeholder="Example: 650" placeholderTextColor="#7d6b91" />
+              <TextInput style={styles.input} value={budgetInput} onChangeText={setBudgetInput} keyboardType="decimal-pad" placeholder="Example: 3500" placeholderTextColor="#7d6b91" />
               <View style={styles.chipWrap}>
                 {QUICK_BUDGETS.map((amount) => (
                   <Pressable key={amount} onPress={() => setBudgetInput(`${amount}`)} style={styles.quickChip}>
@@ -551,6 +524,95 @@ export default function App() {
             </View>
 
             <View style={styles.card}>
+              <Text style={styles.title}>Income this month</Text>
+              <Text style={styles.subtitle}>Log everything coming in — salary, freelance, gifts, transfers.</Text>
+              {totalIncome > 0 && (
+                <View style={[styles.stat, { backgroundColor: '#b7f7cb' }]}>
+                  <Text style={styles.statLabel}>Total income logged</Text>
+                  <Text style={styles.statValue}>{formatCurrency(totalIncome)}</Text>
+                </View>
+              )}
+              <TextInput style={styles.input} value={incomeAmount} onChangeText={setIncomeAmount} keyboardType="decimal-pad" placeholder="Amount received" placeholderTextColor="#7d6b91" />
+              <View style={styles.chipWrap}>
+                {INCOME_SOURCES.map((src) => (
+                  <Pressable key={src} onPress={() => setIncomeSource(src)} style={[styles.categoryChip, { backgroundColor: incomeSource === src ? '#7c7cff' : '#f2ebff' }]}>
+                    <Text style={[styles.categoryText, incomeSource === src && styles.categoryTextActive]}>{src}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <TextInput style={styles.input} value={incomeNote} onChangeText={setIncomeNote} placeholder="Note (optional)" placeholderTextColor="#7d6b91" />
+              <Pressable onPress={addIncome} style={styles.primaryButton}>
+                <Text style={styles.primaryButtonText}>Add income</Text>
+              </Pressable>
+              {month.income.length > 0 && (
+                <>
+                  <Text style={styles.subheading}>Income log</Text>
+                  {month.income.map((entry) => (
+                    <View key={entry.id} style={styles.expenseRow}>
+                      <View style={[styles.expenseBar, { backgroundColor: '#7fe7a3' }]} />
+                      <View style={styles.expenseText}>
+                        <Text style={styles.expenseTitle}>{entry.source}</Text>
+                        <Text style={styles.subtitle}>{entry.note || 'No note'} • {new Date(entry.createdAt).toLocaleDateString('en-US')}</Text>
+                      </View>
+                      <View style={styles.expenseSide}>
+                        <Text style={styles.expenseAmount}>{formatCurrency(entry.amount)}</Text>
+                        <Pressable onPress={() => deleteIncome(entry.id)}>
+                          <Text style={styles.deleteText}>Delete</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </>
+              )}
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.title}>Budget by category</Text>
+              <Text style={styles.subtitle}>Allocate how much to spend per category before the month starts.</Text>
+              {month.budget > 0 && (
+                <>
+                  <View style={styles.allocTrack}>
+                    <View style={[styles.allocFill, { flex: Math.min(categoryBudgetTotal / month.budget, 1) }]} />
+                    <View style={{ flex: Math.max(1 - categoryBudgetTotal / month.budget, 0) }} />
+                  </View>
+                  <Text style={styles.subtitle}>
+                    {formatCurrency(categoryBudgetTotal)} allocated · {formatCurrency(unallocated)} unallocated
+                  </Text>
+                </>
+              )}
+              {categories.map((c) => {
+                const allocated = month.categoryBudgets[c.key] ?? 0;
+                const catSpent = month.expenses.filter(e => e.category === c.key).reduce((s, e) => s + e.amount, 0);
+                return (
+                  <View key={c.key} style={styles.catBudgetRow}>
+                    <View style={styles.catBudgetHeader}>
+                      <View style={[styles.swatch, { backgroundColor: c.color }]} />
+                      <Text style={styles.categoryRowText}>{c.label}</Text>
+                      {allocated > 0 && (
+                        <Text style={[styles.catBadge, { color: catSpent > allocated ? '#d14a76' : '#2c7a3b' }]}>
+                          {formatCurrency(catSpent)} / {formatCurrency(allocated)}
+                        </Text>
+                      )}
+                    </View>
+                    <View style={styles.row}>
+                      <TextInput
+                        style={[styles.input, { flex: 1 }]}
+                        value={categoryBudgetInputs[c.key] ?? ''}
+                        onChangeText={(t) => setCategoryBudgetInputs(prev => ({ ...prev, [c.key]: t }))}
+                        keyboardType="decimal-pad"
+                        placeholder={allocated > 0 ? `Currently ${formatCurrency(allocated)}` : 'Set limit'}
+                        placeholderTextColor="#7d6b91"
+                      />
+                      <Pressable onPress={() => saveCategoryBudget(c.key)} style={styles.setButton}>
+                        <Text style={styles.primaryButtonText}>Set</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+
+            <View style={styles.card}>
               <Text style={styles.title}>Savings jar</Text>
               <Pressable onPress={toggleSavings} style={[styles.savingsToggle, month.savingsEnabled && styles.savingsToggleActive]}>
                 <View style={[styles.checkbox, month.savingsEnabled && styles.checkboxActive]}>
@@ -558,19 +620,12 @@ export default function App() {
                 </View>
                 <View style={styles.savingsCopy}>
                   <Text style={styles.subheading}>Put money aside this month</Text>
-                  <Text style={styles.subtitle}>Turn this on when you tuck savings away before spending the rest.</Text>
+                  <Text style={styles.subtitle}>Tuck savings away before spending the rest.</Text>
                 </View>
               </Pressable>
               {month.savingsEnabled ? (
                 <>
-                  <TextInput
-                    style={styles.input}
-                    value={savingsInput}
-                    onChangeText={setSavingsInput}
-                    keyboardType="decimal-pad"
-                    placeholder="How much are you saving?"
-                    placeholderTextColor="#7d6b91"
-                  />
+                  <TextInput style={styles.input} value={savingsInput} onChangeText={setSavingsInput} keyboardType="decimal-pad" placeholder="How much are you saving?" placeholderTextColor="#7d6b91" />
                   <Pressable onPress={saveSavings} style={styles.primaryButton}>
                     <Text style={styles.primaryButtonText}>Save savings amount</Text>
                   </Pressable>
@@ -579,32 +634,94 @@ export default function App() {
                 <Text style={styles.subtitle}>No savings tucked away for this month yet.</Text>
               )}
             </View>
+          </>
+        ) : null}
+
+        {/* ── TRACKER / SPEND SCREEN ── */}
+        {screenMode === 'tracker' ? (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.title}>Add expense</Text>
+              <View style={styles.chipWrap}>
+                {categories.map((c) => (
+                  <Pressable key={c.key} onPress={() => setSelectedCategory(c.key)} style={[styles.categoryChip, { backgroundColor: selectedCategory === c.key ? c.color : '#f2ebff' }]}>
+                    <Text style={[styles.categoryText, selectedCategory === c.key && styles.categoryTextActive]}>{c.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <TextInput style={styles.input} value={expenseAmount} onChangeText={setExpenseAmount} keyboardType="decimal-pad" placeholder="How much did you spend?" placeholderTextColor="#7d6b91" />
+              <TextInput style={styles.input} value={expenseNote} onChangeText={setExpenseNote} placeholder="Note (optional)" placeholderTextColor="#7d6b91" />
+              <Pressable onPress={addExpense} style={styles.primaryButton}>
+                <Text style={styles.primaryButtonText}>Add expense</Text>
+              </Pressable>
+            </View>
 
             <View style={styles.card}>
-              <Text style={styles.title}>This month by category</Text>
-              {categoryTotals.length === 0 ? (
-                <Text style={styles.subtitle}>Add an expense to see what you spent money on this month.</Text>
-              ) : (
-                categoryTotals.map((entry) => (
-                  <View key={entry.key} style={styles.breakdownRow}>
-                    <View style={[styles.swatch, { backgroundColor: entry.color }]} />
-                    <Text style={styles.categoryRowText}>{entry.label}</Text>
-                    <Text style={styles.breakdownAmount}>{formatCurrency(entry.total)}</Text>
+              <Text style={styles.title}>Spending by category</Text>
+              {categories.map((c) => {
+                const allocated = month.categoryBudgets[c.key] ?? 0;
+                const catSpent = month.expenses.filter(e => e.category === c.key).reduce((s, e) => s + e.amount, 0);
+                if (catSpent === 0 && allocated === 0) return null;
+                const progress = allocated > 0 ? Math.min(catSpent / allocated, 1) : 0;
+                const overBudget = allocated > 0 && catSpent > allocated;
+                return (
+                  <View key={c.key} style={styles.catSpendRow}>
+                    <View style={styles.catBudgetHeader}>
+                      <View style={[styles.swatch, { backgroundColor: c.color }]} />
+                      <Text style={styles.categoryRowText}>{c.label}</Text>
+                      <Text style={[styles.catBadge, { color: overBudget ? '#d14a76' : '#241042' }]}>
+                        {formatCurrency(catSpent)}{allocated > 0 ? ` / ${formatCurrency(allocated)}` : ''}
+                      </Text>
+                    </View>
+                    {allocated > 0 && (
+                      <View style={styles.progressTrack}>
+                        <View style={[styles.progressFill, { flex: progress, backgroundColor: overBudget ? '#ff5d8f' : c.color }]} />
+                        <View style={[styles.progressRest, { flex: 1 - progress }]} />
+                      </View>
+                    )}
+                    {overBudget && <Text style={styles.overBudgetText}>Over budget by {formatCurrency(catSpent - allocated)}</Text>}
                   </View>
-                ))
+                );
+              })}
+              {categoryTotals.length === 0 && <Text style={styles.subtitle}>No spending recorded yet. Add your first expense above.</Text>}
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.title}>Recent spending</Text>
+              {month.expenses.length === 0 ? (
+                <Text style={styles.subtitle}>No expenses in this month yet.</Text>
+              ) : (
+                month.expenses.map((expense) => {
+                  const cat = categories.find(c => c.key === expense.category);
+                  return (
+                    <View key={expense.id} style={styles.expenseRow}>
+                      <View style={[styles.expenseBar, { backgroundColor: cat?.color ?? '#a78bfa' }]} />
+                      <View style={styles.expenseText}>
+                        <Text style={styles.expenseTitle}>{cat?.label ?? 'Other'}</Text>
+                        <Text style={styles.subtitle}>{expense.note || 'No note'} • {new Date(expense.createdAt).toLocaleDateString('en-US')}</Text>
+                      </View>
+                      <View style={styles.expenseSide}>
+                        <Text style={styles.expenseAmount}>{formatCurrency(expense.amount)}</Text>
+                        <Pressable onPress={() => deleteExpense(expense.id)}>
+                          <Text style={styles.deleteText}>Delete</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  );
+                })
               )}
             </View>
 
             <View style={styles.card}>
               <Text style={styles.title}>Edit categories</Text>
-              {categories.map((category) => (
-                <View key={category.key} style={styles.categoryRow}>
-                  <View style={[styles.swatch, { backgroundColor: category.color }]} />
-                  <Text style={styles.categoryRowText}>{category.label}</Text>
-                  <Pressable onPress={() => { setRenameKey(category.key); setRenameValue(category.label); }} style={styles.smallButton}>
+              {categories.map((c) => (
+                <View key={c.key} style={styles.categoryRow}>
+                  <View style={[styles.swatch, { backgroundColor: c.color }]} />
+                  <Text style={styles.categoryRowText}>{c.label}</Text>
+                  <Pressable onPress={() => { setRenameKey(c.key); setRenameValue(c.label); }} style={styles.smallButton}>
                     <Text style={styles.smallButtonText}>Edit</Text>
                   </Pressable>
-                  <Pressable onPress={() => removeCategory(category.key)} style={styles.smallDanger}>
+                  <Pressable onPress={() => removeCategory(c.key)} style={styles.smallDanger}>
                     <Text style={styles.smallDangerText}>Delete</Text>
                   </Pressable>
                 </View>
@@ -623,7 +740,7 @@ export default function App() {
                 </View>
               ) : null}
               <View style={styles.editorBox}>
-                <TextInput style={styles.input} value={newCategoryLabel} onChangeText={setNewCategoryLabel} placeholder="New category" placeholderTextColor="#7d6b91" />
+                <TextInput style={styles.input} value={newCategoryLabel} onChangeText={setNewCategoryLabel} placeholder="New category name" placeholderTextColor="#7d6b91" />
                 <View style={styles.chipWrap}>
                   {COLOR_OPTIONS.map((color) => (
                     <Pressable key={color} onPress={() => setNewCategoryColor(color)} style={[styles.colorDot, { backgroundColor: color }, newCategoryColor === color && styles.colorDotActive]} />
@@ -634,40 +751,15 @@ export default function App() {
                 </Pressable>
               </View>
             </View>
-
-            <View style={styles.card}>
-              <Text style={styles.title}>Recent spending</Text>
-              {month.expenses.length === 0 ? (
-                <Text style={styles.subtitle}>No expenses in this month yet.</Text>
-              ) : (
-                month.expenses.map((expense) => {
-                  const category = categories.find((entry) => entry.key === expense.category);
-                  return (
-                    <View key={expense.id} style={styles.expenseRow}>
-                      <View style={[styles.expenseBar, { backgroundColor: category?.color ?? '#a78bfa' }]} />
-                      <View style={styles.expenseText}>
-                        <Text style={styles.expenseTitle}>{category?.label ?? 'Other'}</Text>
-                        <Text style={styles.subtitle}>{expense.note || 'No note'} {'\u2022'} {new Date(expense.createdAt).toLocaleDateString('en-US')}</Text>
-                      </View>
-                      <View style={styles.expenseSide}>
-                        <Text style={styles.expenseAmount}>{formatCurrency(expense.amount)}</Text>
-                        <Pressable onPress={() => deleteExpense(expense.id)}>
-                          <Text style={styles.deleteText}>Delete</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  );
-                })
-              )}
-            </View>
           </>
         ) : null}
 
+        {/* ── HISTORY SCREEN ── */}
         {screenMode === 'history' ? (
           <>
             <View style={styles.card}>
               <Text style={styles.title}>Month-by-month history</Text>
-              <Text style={styles.subtitle}>See how much you spent, saved, and what you spent it on every month.</Text>
+              <Text style={styles.subtitle}>See how much you earned, spent, saved, and what you spent it on every month.</Text>
               <Pressable onPress={shareCsv} style={styles.secondaryButton}>
                 <Text style={styles.secondaryButtonText}>Share CSV</Text>
               </Pressable>
@@ -678,35 +770,35 @@ export default function App() {
                 <View style={styles.historyHeader}>
                   <View>
                     <Text style={styles.title}>{row.label}</Text>
-                    <Text style={styles.subtitle}>{formatCurrency(row.spent)} spent, {formatCurrency(row.saved)} tucked away</Text>
+                    <Text style={styles.subtitle}>{formatCurrency(row.spent)} spent · {formatCurrency(row.saved)} saved</Text>
                   </View>
                   <Pressable onPress={() => setSelectedMonthKey(row.monthKey)} style={styles.secondaryButton}>
-                    <Text style={styles.secondaryButtonText}>Open month</Text>
+                    <Text style={styles.secondaryButtonText}>Open</Text>
                   </Pressable>
                 </View>
                 <View style={styles.row}>
+                  <View style={[styles.stat, { backgroundColor: '#d8cbff' }]}>
+                    <Text style={styles.statLabel}>Income</Text>
+                    <Text style={styles.statValue}>{formatCurrency(row.income)}</Text>
+                  </View>
                   <View style={[styles.stat, { backgroundColor: '#ffe38a' }]}>
                     <Text style={styles.statLabel}>Budget</Text>
                     <Text style={styles.statValue}>{formatCurrency(row.budget)}</Text>
                   </View>
+                </View>
+                <View style={styles.row}>
                   <View style={[styles.stat, { backgroundColor: '#ffb3c7' }]}>
                     <Text style={styles.statLabel}>Spent</Text>
                     <Text style={styles.statValue}>{formatCurrency(row.spent)}</Text>
                   </View>
-                </View>
-                <View style={styles.row}>
                   <View style={[styles.stat, { backgroundColor: '#b7f7cb' }]}>
-                    <Text style={styles.statLabel}>Saved</Text>
-                    <Text style={styles.statValue}>{formatCurrency(row.saved)}</Text>
-                  </View>
-                  <View style={[styles.stat, { backgroundColor: '#d8cbff' }]}>
                     <Text style={styles.statLabel}>Left to spend</Text>
                     <Text style={styles.statValue}>{formatCurrency(row.remaining)}</Text>
                   </View>
                 </View>
                 <Text style={styles.subheading}>Spent on what</Text>
                 {row.breakdown.length === 0 ? (
-                  <Text style={styles.subtitle}>No spending recorded in this month yet.</Text>
+                  <Text style={styles.subtitle}>No spending recorded yet.</Text>
                 ) : (
                   row.breakdown.map((entry) => (
                     <View key={`${row.monthKey}-${entry.label}`} style={styles.breakdownRow}>
@@ -731,10 +823,10 @@ const styles = StyleSheet.create({
   brand: { color: '#fff2a8', fontWeight: '800', marginBottom: 8, textTransform: 'uppercase' },
   heroTitle: { color: '#fff', fontSize: 28, fontWeight: '900', lineHeight: 34 },
   tabs: { flexDirection: 'row', backgroundColor: '#3a236f', borderRadius: 999, padding: 6 },
-  tab: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 999 },
+  tab: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 999 },
   tabActive: { backgroundColor: '#ffe38a' },
-  tabText: { color: '#e3d9ff', fontWeight: '800' },
-  tabTextActive: { color: '#523300' },
+  tabText: { color: '#e3d9ff', fontWeight: '800', fontSize: 13 },
+  tabTextActive: { color: '#523300', fontSize: 13 },
   card: { backgroundColor: '#fff8fe', borderRadius: 24, padding: 18, gap: 12 },
   title: { color: '#241042', fontSize: 22, fontWeight: '800' },
   subheading: { color: '#241042', fontSize: 16, fontWeight: '800' },
@@ -744,6 +836,7 @@ const styles = StyleSheet.create({
   monthChipActive: { backgroundColor: '#7c7cff' },
   monthText: { color: '#402a66', fontWeight: '700' },
   monthTextActive: { color: '#fff' },
+  // Jar
   jarWrap: { alignItems: 'center', paddingVertical: 8 },
   jarLid: { width: 176, height: 26, borderRadius: 16, backgroundColor: '#ff5d8f', marginBottom: -4, zIndex: 2 },
   jarGlass: { width: 220, height: 300, borderRadius: 60, borderWidth: 6, borderColor: '#b8a0e8', backgroundColor: 'rgba(180,210,255,0.15)', overflow: 'hidden', justifyContent: 'flex-end' },
@@ -754,14 +847,17 @@ const styles = StyleSheet.create({
   jarBillText: { color: '#2c7a3b', fontSize: 16, fontWeight: '900' },
   jarCoin: { position: 'absolute', width: 40, height: 40, borderRadius: 999, backgroundColor: '#ffe38a', borderWidth: 2, borderColor: '#c9960a', justifyContent: 'center', alignItems: 'center' },
   jarCoinText: { color: '#7a5c00', fontSize: 13, fontWeight: '900' },
+  // Stats
   row: { flexDirection: 'row', gap: 12 },
   stat: { flex: 1, borderRadius: 20, padding: 16, minHeight: 100, justifyContent: 'space-between' },
   statLabel: { color: '#3b234f', fontWeight: '700' },
-  statValue: { color: '#241042', fontSize: 26, fontWeight: '900' },
+  statValue: { color: '#241042', fontSize: 22, fontWeight: '900' },
+  // Category chips
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   categoryChip: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10 },
   categoryText: { color: '#402a66', fontWeight: '700' },
   categoryTextActive: { color: '#fff' },
+  // Inputs & buttons
   input: { backgroundColor: '#f2ebff', borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, color: '#241042', fontSize: 16 },
   primaryButton: { backgroundColor: '#7c7cff', borderRadius: 18, paddingVertical: 14, alignItems: 'center' },
   primaryButtonText: { color: '#fff', fontWeight: '800', fontSize: 16 },
@@ -770,6 +866,16 @@ const styles = StyleSheet.create({
   secondaryButtonText: { color: '#5a3f8a', fontWeight: '700' },
   quickChip: { backgroundColor: '#ffe38a', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10 },
   quickChipText: { color: '#5d3a00', fontWeight: '700' },
+  setButton: { backgroundColor: '#7c7cff', borderRadius: 18, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
+  halfButton: { flex: 1, alignSelf: 'stretch' },
+  // Savings
+  savingsToggle: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f4eeff', borderRadius: 18, padding: 14 },
+  savingsToggleActive: { backgroundColor: '#e0d4ff' },
+  checkbox: { width: 26, height: 26, borderRadius: 8, borderWidth: 2, borderColor: '#b8a0e8', justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
+  checkboxActive: { backgroundColor: '#7c7cff', borderColor: '#7c7cff' },
+  checkboxText: { color: '#fff', fontWeight: '900', fontSize: 14 },
+  savingsCopy: { flex: 1, gap: 2 },
+  // Category rows
   categoryRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#f8f2ff', borderRadius: 18, padding: 12 },
   swatch: { width: 18, height: 18, borderRadius: 999 },
   categoryRowText: { flex: 1, color: '#241042', fontWeight: '700' },
@@ -778,9 +884,21 @@ const styles = StyleSheet.create({
   smallDanger: { backgroundColor: '#ffe5ec', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
   smallDangerText: { color: '#d14a76', fontSize: 12, fontWeight: '700' },
   editorBox: { backgroundColor: '#f4eeff', borderRadius: 20, padding: 14, gap: 12 },
-  halfButton: { flex: 1, alignSelf: 'stretch' },
   colorDot: { width: 34, height: 34, borderRadius: 999 },
   colorDotActive: { borderWidth: 3, borderColor: '#241042' },
+  // Category budget (Plan)
+  catBudgetRow: { gap: 8, paddingVertical: 4 },
+  catBudgetHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  catBadge: { fontSize: 13, fontWeight: '800' },
+  allocTrack: { flexDirection: 'row', height: 10, borderRadius: 999, backgroundColor: '#f2ebff', overflow: 'hidden' },
+  allocFill: { backgroundColor: '#7c7cff', borderRadius: 999 },
+  // Category spend (Tracker)
+  catSpendRow: { gap: 6, paddingVertical: 4 },
+  progressTrack: { flexDirection: 'row', height: 10, borderRadius: 999, backgroundColor: '#f2ebff', overflow: 'hidden' },
+  progressFill: { borderRadius: 999 },
+  progressRest: { backgroundColor: 'transparent' },
+  overBudgetText: { color: '#d14a76', fontSize: 12, fontWeight: '700' },
+  // Expenses & breakdown
   breakdownRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1eaff' },
   breakdownAmount: { color: '#241042', fontWeight: '800' },
   expenseRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f8f2ff', borderRadius: 20, padding: 14 },
@@ -791,6 +909,7 @@ const styles = StyleSheet.create({
   expenseAmount: { color: '#241042', fontWeight: '800' },
   deleteText: { color: '#d14a76', fontWeight: '700', fontSize: 13 },
   historyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  // Loading screen
   loadingScreen: { flex: 1, backgroundColor: '#24134d' },
   loadingInner: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 14 },
   loadingBrand: { color: '#fff2a8', fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
