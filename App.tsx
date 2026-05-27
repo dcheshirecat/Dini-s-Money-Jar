@@ -22,7 +22,7 @@ type MonthData    = {
   regBudgets: Record<string, number>; // planned regular-expense amounts per category
 };
 type StoredData   = { funCategories: FunCategory[]; regCategories: RegCategory[]; months: Record<string, MonthData> };
-type ScreenMode   = 'jar' | 'life' | 'history';
+type ScreenMode   = 'jar' | 'life' | 'daily' | 'history';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'dinis-money-jar-monthly-budget';
@@ -177,6 +177,9 @@ export default function App() {
   const [screen,   setScreen]   = useState<ScreenMode>('jar');
   const [ready,    setReady]    = useState(false);
 
+  // Daily view
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+
   // Fun expense UI
   const [funCat,   setFunCat]   = useState(DEFAULT_FUN_CATS[0].key);
   const [funAmt,   setFunAmt]   = useState('');
@@ -276,6 +279,37 @@ export default function App() {
     anims.forEach(a => a.start());
     return () => anims.forEach(a => a.stop());
   }, [coinA,coinB,coinC,billA,billB]);
+
+  // Build per-day totals for the selected month's period (15th → 14th)
+  const dailyData = useMemo(() => {
+    const [y, m] = selKey.split('-').map(Number);
+    // Period: 15th of selKey month → 14th of next month
+    const periodStart = new Date(y, m - 1, 15);
+    const periodEnd   = new Date(y, m, 14);
+    const days: { dateStr: string; label: string; fun: number; reg: number; dayNum: number }[] = [];
+    const cur = new Date(periodStart);
+    while (cur <= periodEnd) {
+      const dateStr = cur.toISOString().slice(0, 10);
+      const dayNum  = cur.getDate();
+      const mo      = cur.getMonth();
+      const yr      = cur.getFullYear();
+      const label   = cur.toLocaleString('en-US', { month: 'short', day: 'numeric' });
+      const fun = month.funExpenses
+        .filter(e => e.createdAt.slice(0, 10) === dateStr)
+        .reduce((s, e) => s + e.amount, 0);
+      const reg = month.regExpenses
+        .filter(e => e.createdAt.slice(0, 10) === dateStr)
+        .reduce((s, e) => s + e.amount, 0);
+      days.push({ dateStr, label, fun, reg, dayNum });
+      cur.setDate(cur.getDate() + 1);
+    }
+    return days;
+  }, [selKey, month.funExpenses, month.regExpenses]);
+
+  const maxDayTotal = useMemo(() =>
+    Math.max(...dailyData.map(d => d.fun + d.reg), 1),
+    [dailyData]
+  );
 
   const monthOptions = useMemo(() => {
     const keys = new Set(Object.keys(months));
@@ -424,10 +458,10 @@ export default function App() {
 
         {/* Tabs */}
         <View style={s.tabs}>
-          {(['jar','life','history'] as ScreenMode[]).map(m => (
+          {(['jar','life','daily','history'] as ScreenMode[]).map(m => (
             <Pressable key={m} onPress={() => setScreen(m)} style={[s.tab, screen === m && s.tabActive]}>
               <Text style={[s.tabText, screen === m && s.tabTextActive]}>
-                {m === 'jar' ? '🫙 Fun Jar' : m === 'life' ? '💳 Real Life' : '📅 History'}
+                {m === 'jar' ? '🫙 Jar' : m === 'life' ? '💳 Life' : m === 'daily' ? '📊 Daily' : '📅 History'}
               </Text>
             </Pressable>
           ))}
@@ -818,6 +852,173 @@ export default function App() {
           </>
         ) : null}
 
+        {/* ═══════════════════════ DAILY TAB ═══════════════════════ */}
+        {screen === 'daily' ? (
+          <>
+            {/* Calendar heatmap */}
+            <View style={s.card}>
+              <Text style={s.title}>Daily spending calendar</Text>
+              <Text style={s.subtitle}>{getPeriodLabel(selKey)} · Tap a day to see the breakdown.</Text>
+              {/* Legend */}
+              <View style={s.calLegend}>
+                <View style={s.calLegendItem}><View style={[s.calLegendDot, { backgroundColor: '#ff8a80' }]} /><Text style={s.calLegendText}>Fun</Text></View>
+                <View style={s.calLegendItem}><View style={[s.calLegendDot, { backgroundColor: '#4ecdc4' }]} /><Text style={s.calLegendText}>Regular</Text></View>
+                <View style={s.calLegendItem}><View style={[s.calLegendDot, { backgroundColor: '#f2ebff' }]} /><Text style={s.calLegendText}>Nothing spent</Text></View>
+              </View>
+              {/* Day-of-week header */}
+              <View style={s.calHeader}>
+                {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+                  <Text key={d} style={s.calHeaderText}>{d}</Text>
+                ))}
+              </View>
+              {/* Calendar grid — weeks rows */}
+              {(() => {
+                // Build a 7-column grid starting on the weekday of the first period day
+                const cells: (typeof dailyData[0] | null)[] = [];
+                const firstWeekday = new Date(dailyData[0]?.dateStr ?? new Date()).getDay();
+                for (let i = 0; i < firstWeekday; i++) cells.push(null);
+                cells.push(...dailyData);
+                // Pad end to complete last row
+                while (cells.length % 7 !== 0) cells.push(null);
+                const weeks: (typeof dailyData[0] | null)[][] = [];
+                for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+                return weeks.map((week, wi) => (
+                  <View key={wi} style={s.calWeekRow}>
+                    {week.map((day, di) => {
+                      if (!day) return <View key={di} style={s.calDayEmpty} />;
+                      const total = day.fun + day.reg;
+                      const intensity = total > 0 ? Math.max(0.15, Math.min(total / maxDayTotal, 1)) : 0;
+                      const hasFun = day.fun > 0;
+                      const hasReg = day.reg > 0;
+                      const bg = total === 0
+                        ? '#f2ebff'
+                        : hasFun && hasReg
+                          ? '#c084a0'
+                          : hasFun
+                            ? `rgba(255, 138, 128, ${intensity})`
+                            : `rgba(78, 205, 196, ${intensity})`;
+                      const isSelected = selectedDay === day.dateStr;
+                      return (
+                        <Pressable
+                          key={di}
+                          style={[s.calDay, { backgroundColor: bg }, isSelected && s.calDaySelected]}
+                          onPress={() => setSelectedDay(isSelected ? null : day.dateStr)}
+                        >
+                          <Text style={[s.calDayNum, total > 0 && s.calDayNumSpent]}>{day.dayNum}</Text>
+                          {total > 0 && <Text style={s.calDayAmt}>₪{Math.round(total)}</Text>}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ));
+              })()}
+            </View>
+
+            {/* Selected day detail */}
+            {selectedDay ? (() => {
+              const day = dailyData.find(d => d.dateStr === selectedDay);
+              if (!day) return null;
+              const funItems = month.funExpenses.filter(e => e.createdAt.slice(0, 10) === selectedDay);
+              const regItems = month.regExpenses.filter(e => e.createdAt.slice(0, 10) === selectedDay);
+              return (
+                <View style={s.card}>
+                  <Text style={s.title}>{day.label}</Text>
+                  {funItems.length === 0 && regItems.length === 0 && (
+                    <Text style={s.subtitle}>Nothing spent on this day.</Text>
+                  )}
+                  {funItems.length > 0 && (
+                    <>
+                      <Text style={s.subheading}>🫙 Fun expenses</Text>
+                      {funItems.map(e => {
+                        const c = funCats.find(fc => fc.key === e.category);
+                        return (
+                          <View key={e.id} style={s.expenseRow}>
+                            <View style={[s.expenseBar, { backgroundColor: c?.color ?? '#ff8a80' }]} />
+                            <View style={s.expenseText}>
+                              <Text style={s.expenseTitle}>{c?.label ?? 'Other'}</Text>
+                              <Text style={s.subtitle}>{e.note || 'No note'}</Text>
+                            </View>
+                            <Text style={s.expenseAmount}>{fmt(e.amount)}</Text>
+                          </View>
+                        );
+                      })}
+                    </>
+                  )}
+                  {regItems.length > 0 && (
+                    <>
+                      <Text style={s.subheading}>💳 Regular expenses</Text>
+                      {regItems.map(e => {
+                        const c = regCats.find(rc => rc.key === e.category);
+                        return (
+                          <View key={e.id} style={s.expenseRow}>
+                            <View style={[s.expenseBar, { backgroundColor: c?.color ?? '#4ecdc4' }]} />
+                            <View style={s.expenseText}>
+                              <Text style={s.expenseTitle}>{c?.label ?? 'Other'}</Text>
+                              <Text style={s.subtitle}>{e.note || 'No note'}</Text>
+                            </View>
+                            <Text style={s.expenseAmount}>{fmt(e.amount)}</Text>
+                          </View>
+                        );
+                      })}
+                    </>
+                  )}
+                  {(day.fun > 0 || day.reg > 0) && (
+                    <View style={[s.summaryRow, { backgroundColor: '#f4eeff' }]}>
+                      <Text style={s.summaryLabel}>Total this day</Text>
+                      <Text style={[s.summaryValue, { color: '#241042' }]}>{fmt(day.fun + day.reg)}</Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })() : null}
+
+            {/* Bar chart */}
+            <View style={s.card}>
+              <Text style={s.title}>Daily totals chart</Text>
+              <Text style={s.subtitle}>Each bar shows fun (pink) + regular (teal) spending. Scroll right to see the full month.</Text>
+              <View style={s.calLegend}>
+                <View style={s.calLegendItem}><View style={[s.calLegendDot, { backgroundColor: '#ff8a80' }]} /><Text style={s.calLegendText}>Fun</Text></View>
+                <View style={s.calLegendItem}><View style={[s.calLegendDot, { backgroundColor: '#4ecdc4' }]} /><Text style={s.calLegendText}>Regular</Text></View>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={s.chartWrap}>
+                  {/* Y-axis labels */}
+                  <View style={s.chartYAxis}>
+                    {[1, 0.75, 0.5, 0.25, 0].map(frac => (
+                      <Text key={frac} style={s.chartYLabel}>₪{Math.round(maxDayTotal * frac)}</Text>
+                    ))}
+                  </View>
+                  {/* Bars */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={true} style={{ flex: 1 }}>
+                    <View style={s.chartBars}>
+                      {dailyData.map(day => {
+                        const total = day.fun + day.reg;
+                        const funH  = maxDayTotal > 0 ? (day.fun / maxDayTotal) * 140 : 0;
+                        const regH  = maxDayTotal > 0 ? (day.reg / maxDayTotal) * 140 : 0;
+                        const isSelected = selectedDay === day.dateStr;
+                        return (
+                          <Pressable key={day.dateStr} style={s.chartBarWrap} onPress={() => setSelectedDay(isSelected ? null : day.dateStr)}>
+                            <View style={s.chartBarColumn}>
+                              {total === 0
+                                ? <View style={[s.chartBarSegment, { height: 3, backgroundColor: '#e8e0f0' }]} />
+                                : <>
+                                    {day.reg > 0 && <View style={[s.chartBarSegment, { height: regH, backgroundColor: '#4ecdc4' }]} />}
+                                    {day.fun > 0 && <View style={[s.chartBarSegment, { height: funH, backgroundColor: '#ff8a80' }]} />}
+                                  </>
+                              }
+                            </View>
+                            <Text style={[s.chartBarLabel, isSelected && s.chartBarLabelActive]}>{day.dayNum}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                </View>
+              </ScrollView>
+            </View>
+          </>
+        ) : null}
+
         {/* ═══════════════════════ HISTORY TAB ═══════════════════════ */}
         {screen === 'history' ? (
           <>
@@ -974,6 +1175,30 @@ const s = StyleSheet.create({
   expenseAmount: { color: '#241042', fontWeight: '800' },
   deleteText: { color: '#d14a76', fontWeight: '700', fontSize: 13 },
   historyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  // Calendar
+  calLegend:      { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
+  calLegendItem:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  calLegendDot:   { width: 14, height: 14, borderRadius: 999 },
+  calLegendText:  { color: '#6d5c85', fontSize: 13, fontWeight: '600' },
+  calHeader:      { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+  calHeaderText:  { flex: 1, textAlign: 'center', color: '#9d8ab5', fontSize: 11, fontWeight: '700' },
+  calWeekRow:     { flexDirection: 'row', gap: 4, marginBottom: 4 },
+  calDay:         { flex: 1, aspectRatio: 1, borderRadius: 10, justifyContent: 'center', alignItems: 'center', padding: 2 },
+  calDaySelected: { borderWidth: 2, borderColor: '#7c7cff' },
+  calDayEmpty:    { flex: 1, aspectRatio: 1 },
+  calDayNum:      { fontSize: 12, fontWeight: '700', color: '#9d8ab5' },
+  calDayNumSpent: { color: '#241042' },
+  calDayAmt:      { fontSize: 9, fontWeight: '800', color: '#241042' },
+  // Chart
+  chartWrap:      { flexDirection: 'row', height: 200, alignItems: 'flex-end' },
+  chartYAxis:     { width: 44, height: 180, justifyContent: 'space-between', alignItems: 'flex-end', paddingRight: 6, paddingBottom: 20 },
+  chartYLabel:    { fontSize: 10, color: '#9d8ab5', fontWeight: '600' },
+  chartBars:      { flexDirection: 'row', alignItems: 'flex-end', gap: 4, paddingBottom: 20, paddingTop: 10 },
+  chartBarWrap:   { alignItems: 'center', gap: 4 },
+  chartBarColumn: { width: 22, justifyContent: 'flex-end', height: 140, gap: 1 },
+  chartBarSegment:{ width: 22, borderRadius: 4 },
+  chartBarLabel:  { fontSize: 10, color: '#9d8ab5', fontWeight: '600' },
+  chartBarLabelActive: { color: '#7c7cff', fontWeight: '800' },
   // Loading
   loadingScreen: { flex: 1, backgroundColor: '#24134d' },
   loadingInner:  { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 14 },
