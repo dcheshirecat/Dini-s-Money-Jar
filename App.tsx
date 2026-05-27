@@ -72,6 +72,12 @@ function getPeriodLabel(mk: string) {
 }
 function fmt(v: number) { return `₪${v.toFixed(2)}`; }
 
+// Always use local date, never UTC slice — avoids timezone-shift bugs
+function toLocalDateStr(date: Date | string) {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')}`;
+}
+
 function emptyMonth(): MonthData {
   return { funBudget: 0, funExpenses: [], savingsEnabled: false, savingsSetAside: 0, income: [], regExpenses: [], regBudgets: {} };
 }
@@ -168,10 +174,10 @@ function LoadingScreen() {
 // ── Inline date picker ────────────────────────────────────────────────────────
 function InlineDatePicker({ value, onChange }: { value: string; onChange: (d: string) => void }) {
   const [open, setOpen] = useState(false);
-  const [viewYear, setViewYear]   = useState(() => new Date(value).getFullYear());
-  const [viewMonth, setViewMonth] = useState(() => new Date(value).getMonth());
+  const [viewYear, setViewYear]   = useState(() => new Date(value + 'T12:00:00').getFullYear());
+  const [viewMonth, setViewMonth] = useState(() => new Date(value + 'T12:00:00').getMonth());
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toLocalDateStr(new Date());
   const label = new Date(value + 'T12:00:00').toLocaleString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' });
 
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -280,7 +286,7 @@ export default function App() {
   const [funCat,   setFunCat]   = useState(DEFAULT_FUN_CATS[0].key);
   const [funAmt,   setFunAmt]   = useState('');
   const [funNote,  setFunNote]  = useState('');
-  const [funDate,  setFunDate]  = useState(() => new Date().toISOString().slice(0, 10));
+  const [funDate,  setFunDate]  = useState(() => toLocalDateStr(new Date()));
 
   // Budget
   const [budgetIn, setBudgetIn] = useState('');
@@ -297,7 +303,7 @@ export default function App() {
   const [regCat,   setRegCat]   = useState(DEFAULT_REG_CATS[0].key);
   const [regAmt,   setRegAmt]   = useState('');
   const [regNote,  setRegNote]  = useState('');
-  const [regDate,  setRegDate]  = useState(() => new Date().toISOString().slice(0, 10));
+  const [regDate,  setRegDate]  = useState(() => toLocalDateStr(new Date()));
   const [regPlanInputs, setRegPlanInputs] = useState<Record<string, string>>({});
 
   // Category editors
@@ -387,16 +393,16 @@ export default function App() {
     const days: { dateStr: string; label: string; fun: number; reg: number; dayNum: number }[] = [];
     const cur = new Date(periodStart);
     while (cur <= periodEnd) {
-      const dateStr = cur.toISOString().slice(0, 10);
+      const dateStr = toLocalDateStr(cur);
       const dayNum  = cur.getDate();
       const mo      = cur.getMonth();
       const yr      = cur.getFullYear();
       const label   = cur.toLocaleString('en-US', { month: 'short', day: 'numeric' });
       const fun = month.funExpenses
-        .filter(e => e.createdAt.slice(0, 10) === dateStr)
+        .filter(e => toLocalDateStr(e.createdAt) === dateStr)
         .reduce((s, e) => s + e.amount, 0);
       const reg = month.regExpenses
-        .filter(e => e.createdAt.slice(0, 10) === dateStr)
+        .filter(e => toLocalDateStr(e.createdAt) === dateStr)
         .reduce((s, e) => s + e.amount, 0);
       days.push({ dateStr, label, fun, reg, dayNum });
       cur.setDate(cur.getDate() + 1);
@@ -1019,8 +1025,8 @@ export default function App() {
             {selectedDay ? (() => {
               const day = dailyData.find(d => d.dateStr === selectedDay);
               if (!day) return null;
-              const funItems = month.funExpenses.filter(e => e.createdAt.slice(0, 10) === selectedDay);
-              const regItems = month.regExpenses.filter(e => e.createdAt.slice(0, 10) === selectedDay);
+              const funItems = month.funExpenses.filter(e => toLocalDateStr(e.createdAt) === selectedDay);
+              const regItems = month.regExpenses.filter(e => toLocalDateStr(e.createdAt) === selectedDay);
               return (
                 <View style={s.card}>
                   <Text style={s.title}>{day.label}</Text>
